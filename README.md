@@ -37,6 +37,24 @@ Run the Day 3 tests offline with:
 pytest tests/test_http_client.py
 ```
 
+## Day 4 database layer
+
+The SQLite database layer is defined in `db/schema.sql` and contains `customers`, `jobs`, `invoices`, and `tickets` tables. Foreign keys, status and priority checks, timestamps, indexes, and invoice amount checks are enforced by the schema.
+
+Seed a local database with deterministic mock data:
+
+```powershell
+python db/seed.py
+```
+
+This creates `db/helpdesk.sqlite3` with 5 customers, 10 jobs, 10 invoices, and 10 support tickets. The query helpers in `src/db/queries.py` demonstrate category aggregation, customer/invoice joins, jobs-per-engineer grouping, and an overdue high-value customer subquery.
+
+Run the database tests with:
+
+```powershell
+pytest tests/test_db.py
+```
+
 ## Git workflow
 
 ```powershell
