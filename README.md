@@ -22,6 +22,21 @@ pre-commit run --all-files
 
 The package source lives in `src/`, tests in `tests/`, documentation in `docs/`, reusable prompts in `prompts/`, and evaluation material in `eval/`.
 
+## Day 3 HTTP client
+
+`src/clients/http_client.py` provides a typed `HTTPClient` for the public JSONPlaceholder API:
+
+- `GET /posts/{post_id}` returns a validated `ExternalPost`.
+- `GET /users/{user_id}` returns a validated `ExternalUser`, including nested address and company models.
+
+Pydantic strict models reject malformed or incorrectly typed payloads with `APIResponseValidationError`. HTTP 5xx responses and request timeouts are retried up to three times with exponential backoff. A 404 raises `ResourceNotFoundError`, while other 4xx responses raise `APIClientError`.
+
+Run the Day 3 tests offline with:
+
+```powershell
+pytest tests/test_http_client.py
+```
+
 ## Git workflow
 
 ```powershell
