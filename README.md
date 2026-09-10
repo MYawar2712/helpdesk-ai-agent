@@ -55,6 +55,22 @@ Run the database tests with:
 pytest tests/test_db.py
 ```
 
+## Day 5 analytics notebook
+
+Day 5 adds Pandas and NumPy analysis for the seeded SQLite data. Launch Jupyter from the repository root:
+
+```powershell
+jupyter notebook notebooks/01_data_exploration.ipynb
+```
+
+The notebook loads all four tables from `db/helpdesk.sqlite3`, analyzes ticket distributions, summarizes pending invoice revenue, measures engineer workload, and merges ticket, customer, and invoice data to find high-volume accounts with pending payments. The reusable functions are in `src/analytics/data_summary.py`.
+
+Run the analytics tests with:
+
+```powershell
+pytest tests/test_analytics.py
+```
+
 ## Git workflow
 
 ```powershell
