@@ -71,6 +71,16 @@ Run the analytics tests with:
 pytest tests/test_analytics.py
 ```
 
+## Day 6 JSON transcript storage
+
+Day 6 adds a SQLite JSON document layer for unstructured support transcripts. `src/models_nosql.py` defines strict Pydantic schemas for transcript messages and metadata. `src/clients/nosql_client.py` provides transcript creation, retrieval, nested metadata updates, case-insensitive keyword search, and deletion using SQLite JSON functions.
+
+Run the Day 6 tests with:
+
+```powershell
+pytest tests/test_nosql_client.py
+```
+
 ## Git workflow
 
 ```powershell
