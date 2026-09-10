@@ -81,6 +81,28 @@ Run the Day 6 tests with:
 pytest tests/test_nosql_client.py
 ```
 
+## Day 7 data access layer
+
+The unified `HelpdeskDataRepository` in `src/db/data_layer.py` bridges relational SQL records and JSON transcripts. It provides complete ticket context and customer overviews containing profiles, jobs, invoices, and transcript history.
+
+Architecture:
+
+```text
+SQL: customers - tickets - jobs - invoices
+                 \       /
+                  HelpdeskDataRepository
+                         |
+              SQLite JSON: transcripts
+```
+
+Run the complete test suite with:
+
+```powershell
+pytest
+ruff check .
+ruff format --check .
+```
+
 ## Git workflow
 
 ```powershell

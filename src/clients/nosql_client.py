@@ -103,6 +103,29 @@ class NoSQLClient:
             self._validate(json.loads(row[0])).model_dump(mode="json") for row in rows
         ]
 
+    def get_transcripts_by_ticket(self, ticket_id: str) -> list[dict[str, Any]]:
+        """Return all transcripts associated with a ticket."""
+
+        return self._get_transcripts_by_field("ticket_id", ticket_id)
+
+    def get_transcripts_by_customer(self, customer_id: str) -> list[dict[str, Any]]:
+        """Return all transcripts associated with a customer."""
+
+        return self._get_transcripts_by_field("customer_id", customer_id)
+
+    def _get_transcripts_by_field(
+        self, field_name: str, field_value: str
+    ) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            f"""SELECT document FROM transcripts
+            WHERE json_extract(document, '$.{field_name}') = ?
+            ORDER BY transcript_id""",
+            (field_value,),
+        ).fetchall()
+        return [
+            self._validate(json.loads(row[0])).model_dump(mode="json") for row in rows
+        ]
+
     def delete_transcript(self, transcript_id: str) -> bool:
         """Delete a transcript and return whether a row was removed."""
 
