@@ -103,6 +103,34 @@ ruff check .
 ruff format --check .
 ```
 
+## Day 8 ML ticket classifier
+
+Day 8 adds a local scikit-learn triage pipeline in `src/ml/`. It trains separate
+TF-IDF plus logistic-regression models for ticket category and priority, using
+the SQLite tickets when available and a deterministic synthetic corpus when the
+database is small. Database `network` and `access` labels are mapped to the
+current `outage` and `general_inquiry` categories.
+
+Train and save the artifact with:
+
+```powershell
+python -m ml.train
+```
+
+The output is `models/ticket_classifier.joblib`. `TicketClassifier.predict()`
+returns category, priority, a probability-based confidence score, and sets
+`requires_llm_review` when the lower of the two model confidences is below
+`0.60`. Accuracy and weighted F1, plus a classification report, are printed for
+both targets during training. The local baseline should normally exceed 0.80
+on the included synthetic holdout; production acceptance should also include
+an independently labelled validation set and calibration checks.
+
+Run the ML tests with:
+
+```powershell
+pytest tests/test_classifier.py
+```
+
 ## Git workflow
 
 ```powershell
