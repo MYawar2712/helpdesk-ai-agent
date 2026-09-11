@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class LLMConfigurationError(ValueError):
     """Raised when required LLM configuration is missing or invalid."""

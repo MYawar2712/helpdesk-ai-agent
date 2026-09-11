@@ -11,6 +11,10 @@ $env:LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 $env:LLM_MAX_OUTPUT_TOKENS = "512"
 ```
 
+For persistent local configuration, copy `.env.example` to `.env`, add your
+rotated API key, and keep `.env` private. The client loads `.env` automatically
+when it is initialized.
+
 Example usage:
 
 ```python
