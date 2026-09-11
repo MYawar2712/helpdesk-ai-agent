@@ -179,6 +179,35 @@ with:
 pytest tests/test_api.py
 ```
 
+## Day 11 Celery workers
+
+Day 11 adds Celery tasks for ticket processing and customer notifications. The
+default broker is Redis database 0 and the result backend is Redis database 1.
+For local tests, Celery eager mode and `fakeredis` avoid requiring Docker.
+
+Start a worker when Redis is available:
+
+```powershell
+celery -A src.workers.celery_app worker --loglevel=info
+```
+
+For local development without Docker or a Redis server, use fakeredis and the
+Celery in-memory transport:
+
+```powershell
+$env:CELERY_USE_FAKE_REDIS="1"
+celery -A src.workers.celery_app worker --loglevel=info --pool=solo
+```
+
+This mode is process-local and is intended for development and tests only.
+
+Queue a ticket with `POST /api/v1/tickets/{ticket_id}/process-async`; the API
+returns HTTP 202 with a task ID. Run worker tests with:
+
+```powershell
+pytest tests/test_workers.py
+```
+
 ```powershell
 git status
 git add .

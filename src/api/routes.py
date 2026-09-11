@@ -12,8 +12,17 @@ from api.schemas import (
     TicketIntakeRequest,
 )
 from rules.escalation_engine import EscalationEngine
+from workers.tasks import process_ticket_async
 
 router = APIRouter()
+
+
+@router.post("/api/v1/tickets/{ticket_id}/process-async", status_code=202)
+async def process_ticket(ticket_id: str) -> dict[str, str]:
+    """Queue asynchronous classification and escalation processing."""
+
+    task = process_ticket_async.delay(ticket_id)
+    return {"task_id": task.id, "status": "queued"}
 
 
 @router.get("/health", response_model=HealthCheckResponse)

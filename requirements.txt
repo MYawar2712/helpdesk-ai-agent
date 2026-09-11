@@ -14,3 +14,6 @@ scikit-learn>=1.5,<2
 joblib>=1.4,<2
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
+celery[redis]>=5.4,<6
+fakeredis>=2.25,<3
+openai>=1.50,<2

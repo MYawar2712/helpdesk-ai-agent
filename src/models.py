@@ -38,6 +38,7 @@ class TicketStatus(StrEnum):
     ESCALATED = "escalated"
     RESOLVED = "resolved"
     CLOSED = "closed"
+    PROCESSED = "processed"
 
 
 class TicketPriority(StrEnum):
