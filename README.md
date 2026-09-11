@@ -133,6 +133,52 @@ pytest tests/test_classifier.py
 
 ## Git workflow
 
+## Day 9 escalation and routing rules
+
+`src/rules/escalation_engine.py` combines the Day 8 ML prediction with ticket
+text and customer billing context. It returns an immutable `EscalationResult`
+with the destination queue, optional priority override, escalation state,
+human-handoff state, and explainable reasons.
+
+Active triggers are:
+
+- ML confidence below `0.60`: `tier_1_manual_review` and human handoff.
+- Overdue invoices above `$1,000` or `URGENT` priority: `vip_priority_queue`.
+- `refund`, `chargeback`, `legal`, or `overcharge`: `billing_specialists` and
+  human handoff.
+- Otherwise, category queues route billing, outage, hardware, and general
+  inquiry tickets to their standard support queues.
+
+Financial disputes take queue precedence over VIP and manual-review routing so
+that billing specialists receive the case directly; all matching conditions
+remain visible in `reasons`.
+
+Run the Day 9 tests with:
+
+```powershell
+pytest tests/test_escalation_engine.py
+```
+
+## Day 10 FastAPI service
+
+Day 10 exposes the classifier and escalation engine through an asynchronous
+FastAPI service. The application loads the ML model and unified data repository
+at startup, with interactive Swagger documentation at `/docs`.
+
+Start it locally from the repository root:
+
+```powershell
+uvicorn src.api.main:app --reload
+```
+
+Available endpoints include `GET /health`, `POST /api/v1/tickets/classify`,
+and `GET /api/v1/tickets/{ticket_id}/context`. Run the API integration tests
+with:
+
+```powershell
+pytest tests/test_api.py
+```
+
 ```powershell
 git status
 git add .

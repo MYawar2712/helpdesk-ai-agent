@@ -9,6 +9,17 @@ from enum import StrEnum
 from typing import Final
 
 
+@dataclass(frozen=True, slots=True)
+class EscalationResult:
+    """Decision produced after applying business rules to a ticket."""
+
+    should_escalate: bool
+    target_queue: str
+    priority_override: str | None
+    requires_human_handoff: bool
+    reasons: list[str]
+
+
 class JobStatus(StrEnum):
     """Lifecycle states for a scheduled customer job."""
 
