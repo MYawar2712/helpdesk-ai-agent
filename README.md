@@ -1,6 +1,8 @@
 # helpdesk-ai-agent
 
-A small, typed Python foundation for building and evaluating a helpdesk AI agent. Day 1 establishes the project layout, virtual-environment workflow, Git hygiene, pre-commit checks, and a simple domain class.
+A small, typed Python foundation for building and evaluating a helpdesk AI agent.
+The project now includes a Week 2 LLM pipeline with structured classification,
+LangChain composition, and database tool calling.
 
 ## Setup
 
@@ -206,6 +208,66 @@ returns HTTP 202 with a task ID. Run worker tests with:
 
 ```powershell
 pytest tests/test_workers.py
+```
+
+## Day 12 ticket-classification prompts
+
+Day 12 adds versioned prompts in `prompts/ticket_classifier/`:
+`v1.md`, `v2.md`, and `v3.md`. The prompt version is selected by the
+classification service or LangChain chain rather than embedding prompt text in
+Python code.
+
+## Day 13 structured LLM output
+
+`src/llm/structured_extract.py` uses the Day 11 `LLMClient` JSON mode and
+Pydantic validation to produce a trusted `TicketClassification`. Categories and
+priorities are constrained, confidence must be between `0.0` and `1.0`, and
+invalid responses trigger bounded retries.
+
+## Day 14 ticket-classification pipeline
+
+`src/services/ticket_classifier.py` combines prompt loading, LLM extraction,
+validation, and SQLite persistence. `classify_and_save()` writes only validated
+category, priority, confidence, and escalation values through
+`HelpdeskDataRepository`; invalid LLM output is never saved.
+
+```text
+Raw ticket → Prompt → LLM → JSON → Pydantic → TicketClassification → SQLite
+```
+
+## Day 15 LangChain chain
+
+`src/chains/ticket_chain.py` provides a LangChain equivalent using
+`PromptTemplate`, runnable composition, and `PydanticOutputParser`. It returns
+the same `TicketClassification` model while keeping database persistence in the
+Day 14 service.
+
+Run its tests with:
+
+```powershell
+pytest tests/test_ticket_chain.py
+```
+
+## Day 16 database tools and function calling
+
+`src/tools/` provides typed, repository-backed tools for `get_job`,
+`get_customer`, and `get_open_invoices`. `ToolCallingAssistant` sends their
+schemas to the configured LLM, executes the selected tool, then sends the tool
+result back to the LLM for a final answer. Tools do not contain raw SQL or
+credentials, and missing records return explicit not-found results.
+
+Run the tool tests with:
+
+```powershell
+pytest tests/test_tools.py
+```
+
+The complete project verification is:
+
+```powershell
+pytest -q
+ruff check src tests db
+ruff format --check .
 ```
 
 ```powershell
