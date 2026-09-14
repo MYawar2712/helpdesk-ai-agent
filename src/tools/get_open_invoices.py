@@ -15,6 +15,8 @@ def get_open_invoices(
     """Return unpaid and overdue invoices for a customer."""
     if not isinstance(customer_id, str) or not customer_id.strip():
         raise ValueError("customer_id must be a non-empty string")
+    if customer_id.isdigit():
+        customer_id = f"customer-{customer_id}"
     if repository.get_customer(customer_id) is None:
         return {"found": False, "invoices": [], "error": "Customer not found"}
     return {

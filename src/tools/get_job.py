@@ -13,6 +13,8 @@ def get_job(repository: HelpdeskDataRepository, id: str) -> dict[str, Any]:
     """Return a job record, or a consistent not-found result."""
     if not isinstance(id, str) or not id.strip():
         raise ValueError("id must be a non-empty string")
+    if id.isdigit():
+        id = f"job-{id}"
     job = repository.get_job(id)
     if job is None:
         return {"found": False, "job": None, "error": "Job not found"}

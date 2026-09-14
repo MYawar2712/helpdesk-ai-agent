@@ -13,6 +13,8 @@ def get_customer(repository: HelpdeskDataRepository, id: str) -> dict[str, Any]:
     """Return a customer record, or a consistent not-found result."""
     if not isinstance(id, str) or not id.strip():
         raise ValueError("id must be a non-empty string")
+    if id.isdigit():
+        id = f"customer-{id}"
     customer = repository.get_customer(id)
     if customer is None:
         return {"found": False, "customer": None, "error": "Customer not found"}
