@@ -77,6 +77,25 @@ class LLMClient:
             raise LLMResponseError("LLM JSON response must be an object")
         return value
 
+    def generate_with_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> Any:
+        """Send a provider-compatible tool-calling request."""
+
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "stream": False,
+            "timeout": self.config.timeout,
+            "max_tokens": self.config.max_output_tokens,
+        }
+        try:
+            return self._provider.chat.completions.create(**kwargs)
+        except Exception as error:
+            raise LLMAPIError("LLM tool-calling request failed") from error
+
     def _request(
         self,
         system_prompt: str,

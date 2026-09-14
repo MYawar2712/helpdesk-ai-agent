@@ -46,6 +46,26 @@ class HelpdeskDataRepository:
             "transcripts": self.nosql_client.get_transcripts_by_ticket(ticket_id),
         }
 
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        """Return one job by ID."""
+
+        return self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+
+    def get_customer(self, customer_id: str) -> dict[str, Any] | None:
+        """Return one customer by ID."""
+
+        return self._one("SELECT * FROM customers WHERE id = ?", (customer_id,))
+
+    def get_open_invoices(self, customer_id: str) -> list[dict[str, Any]]:
+        """Return a customer's unpaid or overdue invoices."""
+
+        return self._many(
+            """SELECT * FROM invoices
+            WHERE customer_id = ? AND status IN ('unpaid', 'overdue')
+            ORDER BY due_date, id""",
+            (customer_id,),
+        )
+
     def get_customer_overview(self, customer_id: str) -> dict[str, Any] | None:
         """Return a customer profile with jobs, invoices, and chat history."""
 
