@@ -36,3 +36,20 @@ classification = TicketClassificationChain(prompt_version="v3").invoke(
 For persistence, pass the resulting validated object to the existing Day 14
 repository/service flow. Invalid JSON or schema-invalid values produce a
 LangChain parser exception and are not persisted by this chain.
+
+## Live LangChain smoke test
+
+With a configured `.env`, run:
+
+```powershell
+@'
+from chains.ticket_chain import TicketClassificationChain
+
+result = TicketClassificationChain(prompt_version="v1").invoke(
+    "My air conditioner stopped cooling; I need a technician today."
+)
+print(result.model_dump_json(indent=2))
+'@ | .\.venv\Scripts\python.exe
+```
+
+For an offline test, run `pytest tests/test_ticket_chain.py`.

@@ -34,3 +34,22 @@ schema-compliant JSON result and does not expose internal error details to an en
 user. `max_retries` controls additional attempts (default `2`, so at most three
 requests). If all attempts fail, `StructuredOutputError` is raised rather than
 returning untrusted data.
+
+## Live JSON smoke test
+
+With `LLM_API_KEY` configured in `.env`, run this from the repository root:
+
+```powershell
+@'
+from pathlib import Path
+from llm.structured_extract import extract_ticket_classification
+
+prompt = Path("prompts/ticket_classifier/v1.md").read_text(encoding="utf-8")
+result = extract_ticket_classification(
+    "My air conditioner stopped cooling; I need a technician today.", prompt
+)
+print(result.model_dump_json(indent=2))
+'@ | .\.venv\Scripts\python.exe
+```
+
+For an offline test, run `pytest tests/test_structured_extract.py`.

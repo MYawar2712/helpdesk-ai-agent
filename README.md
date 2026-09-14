@@ -224,6 +224,21 @@ Pydantic validation to produce a trusted `TicketClassification`. Categories and
 priorities are constrained, confidence must be between `0.0` and `1.0`, and
 invalid responses trigger bounded retries.
 
+Live JSON classification smoke test (requires a configured `.env`):
+
+```powershell
+@'
+from pathlib import Path
+from llm.structured_extract import extract_ticket_classification
+
+prompt = Path("prompts/ticket_classifier/v1.md").read_text(encoding="utf-8")
+result = extract_ticket_classification(
+    "My air conditioner stopped cooling; I need a technician today.", prompt
+)
+print(result.model_dump_json(indent=2))
+'@ | .\.venv\Scripts\python.exe
+```
+
 ## Day 14 ticket-classification pipeline
 
 `src/services/ticket_classifier.py` combines prompt loading, LLM extraction,
@@ -261,6 +276,9 @@ Run the tool tests with:
 ```powershell
 pytest tests/test_tools.py
 ```
+
+Live smoke-test commands for Days 13–16 are documented in
+`docs/day-13.md`, `docs/day-14.md`, `docs/day-15.md`, and `docs/day-.md`.
 
 The complete project verification is:
 

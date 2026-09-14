@@ -40,3 +40,27 @@ Responsibilities remain separate: prompt files provide instructions,
 `LLMClient` performs provider requests, the structured extractor validates and
 retries, `TicketClassification` is the trusted result contract, and the
 repository persists that trusted data.
+
+## Live classifier and database test
+
+This uses the configured LLM and an in-memory seeded database:
+
+```powershell
+@'
+import sqlite3
+from clients.nosql_client import NoSQLClient
+from db.data_layer import HelpdeskDataRepository
+from db.seed import seed_database
+from services.ticket_classifier import TicketClassifier
+
+connection = sqlite3.connect(":memory:")
+seed_database(connection)
+repository = HelpdeskDataRepository(connection, NoSQLClient(sqlite3.connect(":memory:")))
+result = TicketClassifier(repository, prompt_version="v1").classify_and_save(
+    "ticket-1", "My air conditioner stopped cooling; I need a technician today."
+)
+print(result.model_dump_json(indent=2))
+'@ | .\.venv\Scripts\python.exe
+```
+
+This does not modify `db/helpdesk.sqlite3`.
