@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     description TEXT NOT NULL,
     category TEXT NOT NULL,
     priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+    confidence REAL CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    needs_escalation INTEGER CHECK (needs_escalation IN (0, 1)),
     status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'escalated', 'resolved', 'closed', 'processed')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE

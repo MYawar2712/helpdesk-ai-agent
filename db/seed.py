@@ -15,6 +15,18 @@ def initialize_database(connection: sqlite3.Connection) -> None:
 
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    ticket_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(tickets)")
+    }
+    migrations = {
+        "confidence": "ALTER TABLE tickets ADD COLUMN confidence REAL "
+        "CHECK (confidence >= 0.0 AND confidence <= 1.0)",
+        "needs_escalation": "ALTER TABLE tickets ADD COLUMN needs_escalation "
+        "INTEGER CHECK (needs_escalation IN (0, 1))",
+    }
+    for column, statement in migrations.items():
+        if column not in ticket_columns:
+            connection.execute(statement)
 
 
 def seed_database(connection: sqlite3.Connection) -> None:

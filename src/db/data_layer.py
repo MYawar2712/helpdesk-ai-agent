@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from clients.nosql_client import NoSQLClient
+from llm.structured_extract import TicketClassification
 
 
 class HelpdeskDataRepository:
@@ -66,6 +67,28 @@ class HelpdeskDataRepository:
             "invoices": invoices,
             "transcripts": transcripts,
         }
+
+    def save_ticket_classification(
+        self, ticket_id: str, classification: TicketClassification
+    ) -> None:
+        """Persist a validated LLM classification for an existing ticket."""
+
+        cursor = self.sql_connection.execute(
+            """UPDATE tickets
+            SET category = ?, priority = ?, confidence = ?, needs_escalation = ?
+            WHERE id = ?""",
+            (
+                classification.category,
+                classification.priority,
+                classification.confidence,
+                int(classification.needs_escalation),
+                ticket_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self.sql_connection.rollback()
+            raise LookupError(f"Ticket does not exist: {ticket_id}")
+        self.sql_connection.commit()
 
     def _one(self, query: str, parameters: tuple[Any, ...]) -> dict[str, Any] | None:
         row = self.sql_connection.execute(query, parameters).fetchone()
