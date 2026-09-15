@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.rag_node import RAGNode
+from agent.tracing import traceable
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
 from llm.client import LLMClient
@@ -95,6 +96,7 @@ class HelpdeskAgent:
             self._final_node,
         )
 
+    @traceable(name="helpdesk_agent")
     def invoke(self, ticket_text: str) -> AgentState:
         """Run the graph for one support ticket."""
         if not ticket_text.strip():
@@ -104,6 +106,7 @@ class HelpdeskAgent:
     def _client(self) -> DecisionClient:
         return self._llm_client or LLMClient()
 
+    @traceable(name="decide_node")
     def _decision_node(self, state: AgentState) -> AgentState:
         decision_data = self._client().generate_json(
             """You are a helpdesk routing decision maker. Return JSON only.
@@ -155,6 +158,7 @@ get_open_invoices, get_all_invoices.""",
             "handoff_reason": decision.handoff_reason or "",
         }
 
+    @traceable(name="tool_node")
     def _tool_node(self, state: AgentState) -> AgentState:
         tool = self._tools[state["tool_name"]]
         tool_input = dict(state.get("tool_input", {}))
@@ -162,14 +166,23 @@ get_open_invoices, get_all_invoices.""",
             alias = "job_id" if state["tool_name"] == "get_job" else "customer_id"
             if "id" not in tool_input and alias in tool_input:
                 tool_input["id"] = tool_input.pop(alias)
+            # Coerce int IDs to str (LLM sometimes returns bare integers)
+            if "id" in tool_input and not isinstance(tool_input["id"], str):
+                tool_input["id"] = str(tool_input["id"])
         elif state["tool_name"] in {"get_open_invoices", "get_all_invoices"}:
             if "customer_id" not in tool_input and "id" in tool_input:
                 tool_input["customer_id"] = tool_input.pop("id")
+            # Coerce int IDs to str
+            if "customer_id" in tool_input and not isinstance(
+                tool_input["customer_id"], str
+            ):
+                tool_input["customer_id"] = str(tool_input["customer_id"])
         result = tool.invoke(tool_input)
         if not isinstance(result, dict):
             raise TypeError("Agent tools must return dictionary results")
         return {**state, "tool_result": result}
 
+    @traceable(name="rag_node")
     def _rag_execution_node(self, state: AgentState) -> AgentState:
         rag_instance = self._rag_node or RAGNode()
         result = rag_instance.run(state["ticket_text"])
@@ -186,6 +199,7 @@ get_open_invoices, get_all_invoices.""",
         }
 
     @staticmethod
+    @traceable(name="handoff_node")
     def _handoff_node(state: AgentState) -> AgentState:
         reason = state.get("handoff_reason") or "Human support is required."
         return {
@@ -195,6 +209,7 @@ get_open_invoices, get_all_invoices.""",
             ),
         }
 
+    @traceable(name="final_node")
     def _final_node(self, state: AgentState) -> AgentState:
         if state["route"] in {"respond", "rag"}:
             return {

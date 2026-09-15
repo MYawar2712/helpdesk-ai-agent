@@ -6,6 +6,20 @@ import json
 from collections.abc import Iterator
 from typing import Any, Protocol
 
+try:
+    from langsmith import traceable  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover
+
+    def traceable(func=None, *, name: str = "", **_: object):  # type: ignore[misc]
+        if func is None:
+
+            def decorator(f):
+                return f
+
+            return decorator
+        return func
+
+
 from llm.config import LLMConfig
 
 
@@ -34,6 +48,7 @@ class LLMClient:
         self.config = config or LLMConfig.from_environment()
         self._provider = provider or self._build_openai_provider()
 
+    @traceable(name="llm_generate", run_type="llm")
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         """Return one complete text response."""
 
@@ -62,6 +77,7 @@ class LLMClient:
         except Exception as error:
             raise LLMAPIError("LLM streaming request failed") from error
 
+    @traceable(name="llm_generate_json", run_type="llm")
     def generate_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """Request and parse a JSON object from the provider."""
 
@@ -77,6 +93,7 @@ class LLMClient:
             raise LLMResponseError("LLM JSON response must be an object")
         return value
 
+    @traceable(name="llm_generate_with_tools", run_type="llm")
     def generate_with_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> Any:

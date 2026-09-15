@@ -16,5 +16,6 @@ build/
 *.egg-info/
 .ipynb_checkpoints/
 logs/*.log
+eval/last_eval_results.json
 db/*.sqlite3
 data/

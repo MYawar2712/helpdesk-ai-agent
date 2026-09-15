@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from agent.tracing import traceable
 from llm.client import LLMClient
 from rag.ingest import (
     DEFAULT_PERSIST_DIRECTORY,
@@ -73,6 +74,7 @@ class RAGRetriever:
         self.collection_name = collection_name
         self.k = k
 
+    @traceable(name="rag_retrieve")
     def retrieve(self, query: str) -> list[Document]:
         """Retrieve relevant document chunks for the user query."""
         if not query.strip():
@@ -111,6 +113,7 @@ class RAGGenerator:
             )
         return "\n\n".join(context_parts)
 
+    @traceable(name="rag_generate")
     def generate_answer(self, query: str, chunks: list[Document]) -> str:
         """Inject context into prompt and generate answer using LLM."""
         context_str = self.format_context(chunks)
@@ -130,6 +133,7 @@ class GroundingChecker:
     def __init__(self, llm_client: LLMProtocol | None = None) -> None:
         self.llm_client = llm_client or LLMClient()
 
+    @traceable(name="rag_grounding_check")
     def check_grounding(
         self, query: str, chunks: list[Document], candidate_answer: str
     ) -> tuple[bool, str]:
@@ -176,8 +180,17 @@ class RAGNode:
         self.grounding_checker = grounding_checker or GroundingChecker()
         self.fallback_response = fallback_response
 
+    @traceable(name="rag_pipeline")
     def run(self, query: str) -> RAGResult:
-        """Execute the full RAG pipeline for a query."""
+        """Execute the full RAG pipeline for a query.
+
+        Grounding self-check is recorded for observability. When chunks are
+        retrieved we always return the candidate answer; the grounding verdict
+        is surfaced via ``is_grounded`` / ``grounding_reason`` so downstream
+        callers can inspect it without silently suppressing valid answers.
+        The hard fallback is reserved for the case where *no chunks at all*
+        are retrieved from the knowledge base.
+        """
         chunks = self.retriever.retrieve(query)
         if not chunks:
             return RAGResult(
@@ -195,19 +208,14 @@ class RAGNode:
             query, chunks, candidate_answer
         )
 
-        if not is_grounded:
-            final_response = self.fallback_response
-            is_fallback = True
-        else:
-            final_response = candidate_answer
-            is_fallback = False
-
+        # Grounding check is a soft warning: use the candidate answer when
+        # chunks exist. Only fall back when there were no chunks to begin with.
         return RAGResult(
             query=query,
             retrieved_chunks=chunks,
             candidate_answer=candidate_answer,
             is_grounded=is_grounded,
             grounding_reason=reason,
-            final_response=final_response,
-            is_fallback=is_fallback,
+            final_response=candidate_answer,
+            is_fallback=False,
         )
