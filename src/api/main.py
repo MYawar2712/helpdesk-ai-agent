@@ -25,6 +25,9 @@ from api.routes import router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
 from ml.classifier import TicketClassifier
+from tools.get_customer import create_get_customer_tool
+from tools.get_job import create_get_job_tool
+from tools.get_open_invoices import create_get_open_invoices_tool
 
 VERSION = "0.1.0"
 
@@ -33,13 +36,18 @@ VERSION = "0.1.0"
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize model and repository resources for application lifetime."""
     app.state.classifier = TicketClassifier()
-    app.state.agent = HelpdeskAgent()
     sql_connection = sqlite3.connect("db/helpdesk.sqlite3", check_same_thread=False)
     transcript_connection = sqlite3.connect(
         "db/helpdesk.sqlite3", check_same_thread=False
     )
-    app.state.repository = HelpdeskDataRepository(
-        sql_connection, NoSQLClient(transcript_connection)
+    repo = HelpdeskDataRepository(sql_connection, NoSQLClient(transcript_connection))
+    app.state.repository = repo
+    app.state.agent = HelpdeskAgent(
+        tools=[
+            create_get_job_tool(repo),
+            create_get_customer_tool(repo),
+            create_get_open_invoices_tool(repo),
+        ]
     )
     yield
     sql_connection.close()

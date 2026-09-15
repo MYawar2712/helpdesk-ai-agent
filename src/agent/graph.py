@@ -1,36 +1,45 @@
-"""LangGraph agent for helpdesk decisions, tools, and human handoff."""
+"""LangGraph agent for helpdesk decisions, tools, RAG, and human handoff."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
+from pathlib import Path
 from typing import Any, Literal, Protocol, TypedDict
 
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent.rag_node import RAGNode
+from clients.nosql_client import NoSQLClient
+from db.data_layer import HelpdeskDataRepository
 from llm.client import LLMClient
+from tools.get_customer import create_get_customer_tool
+from tools.get_job import create_get_job_tool
+from tools.get_open_invoices import create_get_open_invoices_tool
 
 
 class AgentState(TypedDict, total=False):
     """Shared state passed between every graph node."""
 
     ticket_text: str
-    route: Literal["tool", "handoff", "respond"]
+    route: Literal["tool", "handoff", "respond", "rag"]
     tool_name: str
     tool_input: dict[str, Any]
     tool_result: dict[str, Any]
     response: str
     handoff_reason: str
     final_response: str
+    rag_result: Any
 
 
 class AgentDecision(BaseModel):
     """Validated decision returned by the LLM decision node."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="ignore")
 
-    route: Literal["tool", "handoff", "respond"]
+    route: Literal["tool", "handoff", "respond", "rag"]
     tool_name: str | None = None
     tool_input: dict[str, Any] = Field(default_factory=dict)
     response: str | None = None
@@ -45,6 +54,23 @@ class DecisionClient(Protocol):
     def generate(self, system_prompt: str, user_prompt: str) -> str: ...
 
 
+def create_default_tools() -> list[BaseTool]:
+    """Create default repository-backed tools for database lookups."""
+    db_path = Path(__file__).resolve().parents[2] / "db" / "helpdesk.sqlite3"
+    try:
+        connection = sqlite3.connect(str(db_path), check_same_thread=False)
+        repo = HelpdeskDataRepository(
+            connection, NoSQLClient(sqlite3.connect(":memory:"))
+        )
+        return [
+            create_get_job_tool(repo),
+            create_get_customer_tool(repo),
+            create_get_open_invoices_tool(repo),
+        ]
+    except Exception:
+        return []
+
+
 class HelpdeskAgent:
     """Compile and invoke the modular helpdesk LangGraph."""
 
@@ -53,11 +79,18 @@ class HelpdeskAgent:
         *,
         llm_client: DecisionClient | None = None,
         tools: list[BaseTool] | None = None,
+        rag_node: RAGNode | None = None,
     ) -> None:
         self._llm_client = llm_client
-        self._tools = {tool.name: tool for tool in tools or []}
+        active_tools = tools if tools is not None else create_default_tools()
+        self._tools = {tool.name: tool for tool in active_tools}
+        self._rag_node = rag_node
         self.graph = build_helpdesk_graph(
-            self._decision_node, self._tool_node, self._handoff_node, self._final_node
+            self._decision_node,
+            self._tool_node,
+            self._handoff_node,
+            self._rag_execution_node,
+            self._final_node,
         )
 
     def invoke(self, ticket_text: str) -> AgentState:
@@ -72,15 +105,16 @@ class HelpdeskAgent:
     def _decision_node(self, state: AgentState) -> AgentState:
         decision_data = self._client().generate_json(
             """You are a helpdesk routing decision maker. Return JSON only.
-Choose route 'tool' when database information is needed, 'handoff' when a human
-must handle the ticket, or 'respond' when no database lookup is needed.
+Choose route 'tool' when database information (get_job, get_customer,
+get_open_invoices) is needed, 'rag' when knowledge-base, policy, warranty,
+or technical troubleshooting information is needed, 'handoff' when a human
+must handle the ticket, or 'respond' when a simple general response is needed.
 For tool, provide tool_name and tool_input. For handoff, provide handoff_reason.
-For respond, provide response. Allowed tools are: get_job, get_customer,
+For respond, provide response. Allowed tools: get_job, get_customer,
 get_open_invoices.""",
             state["ticket_text"],
         )
-        # Some compatible models use `tool` as the tool name and omit the
-        # explicit route. Normalize that equivalent response before validation.
+        # Normalize equivalent responses missing route key
         if "route" not in decision_data and "tool" in decision_data:
             decision_data = {
                 **decision_data,
@@ -115,6 +149,21 @@ get_open_invoices.""",
             raise TypeError("Agent tools must return dictionary results")
         return {**state, "tool_result": result}
 
+    def _rag_execution_node(self, state: AgentState) -> AgentState:
+        rag_instance = self._rag_node or RAGNode()
+        result = rag_instance.run(state["ticket_text"])
+        sources = [
+            str(doc.metadata["source"])
+            for doc in result.retrieved_chunks
+            if "source" in doc.metadata
+        ]
+        return {
+            **state,
+            "rag_result": result,
+            "final_response": result.final_response,
+            "tool_result": {"sources": sources} if sources else {},
+        }
+
     @staticmethod
     def _handoff_node(state: AgentState) -> AgentState:
         reason = state.get("handoff_reason") or "Human support is required."
@@ -126,8 +175,12 @@ get_open_invoices.""",
         }
 
     def _final_node(self, state: AgentState) -> AgentState:
-        if state["route"] == "respond":
-            return {**state, "final_response": state.get("response", "")}
+        if state["route"] in {"respond", "rag"}:
+            return {
+                **state,
+                "final_response": state.get("final_response")
+                or state.get("response", ""),
+            }
         if state["route"] == "handoff":
             return state
         result = json.dumps(state.get("tool_result", {}))
@@ -142,22 +195,30 @@ def build_helpdesk_graph(
     decision_node: Any,
     tool_node: Any,
     handoff_node: Any,
+    rag_node: Any,
     final_node: Any,
 ) -> Any:
     """Build a graph from independently testable node callables."""
-
     graph = StateGraph(AgentState)
     graph.add_node("decide", decision_node)
     graph.add_node("tool", tool_node)
     graph.add_node("human_handoff", handoff_node)
+    graph.add_node("rag", rag_node)
     graph.add_node("final", final_node)
+
     graph.add_edge(START, "decide")
     graph.add_conditional_edges(
         "decide",
         lambda state: state["route"],
-        {"tool": "tool", "handoff": "human_handoff", "respond": "final"},
+        {
+            "tool": "tool",
+            "handoff": "human_handoff",
+            "rag": "rag",
+            "respond": "final",
+        },
     )
     graph.add_edge("tool", "final")
     graph.add_edge("human_handoff", "final")
+    graph.add_edge("rag", "final")
     graph.add_edge("final", END)
     return graph.compile()

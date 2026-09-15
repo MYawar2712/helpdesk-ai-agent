@@ -1,8 +1,7 @@
 # helpdesk-ai-agent
 
 A small, typed Python foundation for building and evaluating a helpdesk AI agent.
-The project now includes a Week 2 LLM pipeline with structured classification,
-LangChain composition, and database tool calling.
+The project includes a full Week 3 end-to-end AI agent pipeline with LangGraph routing, database function calling, local vector RAG, grounding self-checks, and FastAPI REST endpoints.
 
 ## Setup
 
@@ -23,6 +22,44 @@ pre-commit run --all-files
 ```
 
 The package source lives in `src/`, tests in `tests/`, documentation in `docs/`, reusable prompts in `prompts/`, and evaluation material in `eval/`.
+
+---
+
+## Week 3 Architecture: Integrated RAG & Function Calling Agent
+
+The end-to-end Week 3 architecture integrates **FastAPI**, **LangGraph**, **Database Tools**, **Chroma Vector RAG**, **LLM Grounding Self-Check**, and **Structured Pydantic Responses**:
+
+```text
+HTTP Request (POST /chat)
+       │
+       ▼
+ FastAPI Router (`api/routes.py`)
+       │
+       ▼
+ LangGraph Agent (`agent/graph.py`)
+       ├── Decision Node (Routes: tool | rag | respond | handoff)
+       │
+       ├── Tool Calling Node (`get_job`, `get_customer`, `get_open_invoices`)
+       │
+       └── RAG Pipeline Node (`agent/rag_node.py`)
+             ├── Vector Search (Chroma DB + Embeddings)
+             ├── Context Injection (Formatted Markdown sources)
+             ├── LLM Answer Generation
+             └── Grounding Self-Check (Suppresses ungrounded claims)
+       │
+       ▼
+ Structured Pydantic JSON Response (`ChatResponse`)
+```
+
+### Component Breakdown
+* **FastAPI (`src/api/`)**: Provides async `/chat` and `/` health endpoints, validating requests with `ChatRequest` and returning structured `ChatResponse` schemas.
+* **LangGraph (`src/agent/graph.py`)**: Implements an explicit state graph for routing ticket queries dynamically across Database Tools, RAG, Direct Responses, and Human Handoffs.
+* **Database Tools (`src/tools/`)**: Typed, repository-backed tools for `get_job`, `get_customer`, and `get_open_invoices` querying SQLite.
+* **RAG Pipeline (`src/agent/rag_node.py`)**: Decoupled vector retrieval, document chunking (`RecursiveCharacterTextSplitter`), prompt context injection, candidate answer generation, and grounding self-checks.
+* **Grounding & Fallback**: Evaluates candidate answers against retrieved context using JSON self-verification. Returns `SAFE_FALLBACK_RESPONSE` if context is insufficient or ungrounded.
+* **LLM Client (`src/llm/`)**: Uniform client interface supporting text generation, JSON mode, and schema parsing targeting Qwen 3.7.
+
+---
 
 ## Day 3 HTTP client
 
@@ -133,8 +170,6 @@ Run the ML tests with:
 pytest tests/test_classifier.py
 ```
 
-## Git workflow
-
 ## Day 9 escalation and routing rules
 
 `src/rules/escalation_engine.py` combines the Day 8 ML prediction with ticket
@@ -224,21 +259,6 @@ Pydantic validation to produce a trusted `TicketClassification`. Categories and
 priorities are constrained, confidence must be between `0.0` and `1.0`, and
 invalid responses trigger bounded retries.
 
-Live JSON classification smoke test (requires a configured `.env`):
-
-```powershell
-@'
-from pathlib import Path
-from llm.structured_extract import extract_ticket_classification
-
-prompt = Path("prompts/ticket_classifier/v1.md").read_text(encoding="utf-8")
-result = extract_ticket_classification(
-    "My air conditioner stopped cooling; I need a technician today.", prompt
-)
-print(result.model_dump_json(indent=2))
-'@ | .\.venv\Scripts\python.exe
-```
-
 ## Day 14 ticket-classification pipeline
 
 `src/services/ticket_classifier.py` combines prompt loading, LLM extraction,
@@ -246,51 +266,30 @@ validation, and SQLite persistence. `classify_and_save()` writes only validated
 category, priority, confidence, and escalation values through
 `HelpdeskDataRepository`; invalid LLM output is never saved.
 
-```text
-Raw ticket → Prompt → LLM → JSON → Pydantic → TicketClassification → SQLite
-```
-
 ## Day 15 LangChain chain
 
 `src/chains/ticket_chain.py` provides a LangChain equivalent using
-`PromptTemplate`, runnable composition, and `PydanticOutputParser`. It returns
-the same `TicketClassification` model while keeping database persistence in the
-Day 14 service.
-
-Run its tests with:
-
-```powershell
-pytest tests/test_ticket_chain.py
-```
+`PromptTemplate`, runnable composition, and `PydanticOutputParser`.
 
 ## Day 16 database tools and function calling
 
 `src/tools/` provides typed, repository-backed tools for `get_job`,
-`get_customer`, and `get_open_invoices`. `ToolCallingAssistant` sends their
-schemas to the configured LLM, executes the selected tool, then sends the tool
-result back to the LLM for a final answer. Tools do not contain raw SQL or
-credentials, and missing records return explicit not-found results.
+`get_customer`, and `get_open_invoices`.
 
-Run the tool tests with:
+## Days 18–19 Embeddings, Vector Search & RAG
 
-```powershell
-pytest tests/test_tools.py
-```
+`src/rag/ingest.py` and `src/agent/rag_node.py` implement document chunking, Chroma DB vector storage, `qwen3.7-text-embedding` retrieval, context injection, and LLM grounding self-checks.
 
-Live smoke-test commands for Days 13–16 are documented in
-`docs/day-13.md`, `docs/day-14.md`, `docs/day-15.md`, and `docs/day-.md`.
+## Day 20–21 FastAPI & End-to-End Agent Integration
 
-The complete project verification is:
+Exposes `POST /chat` and `GET /` endpoints, integrating LangGraph agent routing, function calling, RAG retrieval, grounding self-verification, and structured Pydantic response models.
+
+---
+
+## Verification Commands
 
 ```powershell
-pytest -q
-ruff check src tests db
-ruff format --check .
-```
-
-```powershell
-git status
-git add .
-git commit -m "Complete Day 1 project setup"
-git push -u origin main
+pytest
+.venv\Scripts\ruff check .
+.venv\Scripts\ruff format --check .
 ```

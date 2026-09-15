@@ -58,9 +58,18 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     route = result.get("route") or None
 
     sources: list[str] = []
-    if tool_result and isinstance(tool_result, dict):
-        if "source" in tool_result:
-            sources.append(str(tool_result["source"]))
+    if result.get("rag_result"):
+        rag_res = result["rag_result"]
+        sources = [
+            str(doc.metadata["source"])
+            for doc in getattr(rag_res, "retrieved_chunks", [])
+            if hasattr(doc, "metadata") and "source" in doc.metadata
+        ]
+    elif tool_result and isinstance(tool_result, dict):
+        if "sources" in tool_result and isinstance(tool_result["sources"], list):
+            sources = [str(s) for s in tool_result["sources"]]
+        elif "source" in tool_result:
+            sources = [str(tool_result["source"])]
 
     return ChatResponse(
         response=response_text,
