@@ -20,6 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from agent.graph import HelpdeskAgent
 from api.routes import router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
@@ -30,9 +31,9 @@ VERSION = "0.1.0"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize model and repository resources for the application lifetime."""
-
+    """Initialize model and repository resources for application lifetime."""
     app.state.classifier = TicketClassifier()
+    app.state.agent = HelpdeskAgent()
     sql_connection = sqlite3.connect("db/helpdesk.sqlite3", check_same_thread=False)
     transcript_connection = sqlite3.connect(
         "db/helpdesk.sqlite3", check_same_thread=False
@@ -59,12 +60,11 @@ app.include_router(router)
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a consistent JSON response for missing routes and records."""
-
     return JSONResponse(status_code=404, content={"detail": "Resource not found"})
 
 
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a safe response without exposing internal exception details."""
-
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    detail_msg = getattr(exc, "detail", None) or "Internal server error"
+    return JSONResponse(status_code=500, content={"detail": detail_msg})

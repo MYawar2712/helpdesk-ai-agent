@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -32,3 +34,19 @@ class HealthCheckResponse(BaseModel):
     status: str
     version: str
     models_loaded: bool
+
+
+class ChatRequest(BaseModel):
+    """User prompt or support question submitted to the helpdesk agent."""
+
+    message: str = Field(..., min_length=1)
+
+
+class ChatResponse(BaseModel):
+    """Structured response produced by the helpdesk agent."""
+
+    response: str
+    route: str | None = None
+    tool_name: str | None = None
+    tool_result: dict[str, Any] | None = None
+    sources: list[str] = Field(default_factory=list)
