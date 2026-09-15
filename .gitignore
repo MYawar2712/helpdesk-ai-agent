@@ -17,3 +17,4 @@ build/
 .ipynb_checkpoints/
 logs/*.log
 db/*.sqlite3
+data/
