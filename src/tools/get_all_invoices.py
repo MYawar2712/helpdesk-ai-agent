@@ -1,4 +1,4 @@
-"""Tool for retrieving a customer's unpaid and overdue invoices."""
+"""Tool for retrieving all invoices (paid, unpaid, and overdue) for a customer."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from langchain_core.tools import StructuredTool
 from db.data_layer import HelpdeskDataRepository
 
 
-def get_open_invoices(
+def get_all_invoices(
     repository: HelpdeskDataRepository, customer_id: str
 ) -> dict[str, Any]:
-    """Return unpaid and overdue invoices for a customer."""
+    """Return all invoices (paid, unpaid, and overdue) for a customer."""
     if not isinstance(customer_id, str) or not customer_id.strip():
         raise ValueError("customer_id must be a non-empty string")
     if customer_id.isdigit():
@@ -21,21 +21,24 @@ def get_open_invoices(
         return {"found": False, "invoices": [], "error": "Customer not found"}
     return {
         "found": True,
-        "invoices": repository.get_open_invoices(customer_id),
+        "invoices": repository.get_all_invoices(customer_id),
     }
 
 
-def create_get_open_invoices_tool(
+def create_get_all_invoices_tool(
     repository: HelpdeskDataRepository,
 ) -> StructuredTool:
     """Create the typed LangChain tool bound to a repository."""
 
-    def lookup_open_invoices(customer_id: str) -> dict[str, Any]:
-        """Get unpaid and overdue invoices using a customer ID."""
-        return get_open_invoices(repository, customer_id)
+    def lookup_all_invoices(customer_id: str) -> dict[str, Any]:
+        """Get all invoices (paid, unpaid, and overdue) using a customer ID."""
+        return get_all_invoices(repository, customer_id)
 
     return StructuredTool.from_function(
-        func=lookup_open_invoices,
-        name="get_open_invoices",
-        description="Get a customer's unpaid and overdue invoices by customer ID.",
+        func=lookup_all_invoices,
+        name="get_all_invoices",
+        description=(
+            "Get all invoices for a customer by customer ID, "
+            "including paid, unpaid, and overdue invoices."
+        ),
     )

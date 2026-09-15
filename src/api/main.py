@@ -25,6 +25,7 @@ from api.routes import router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
 from ml.classifier import TicketClassifier
+from tools.get_all_invoices import create_get_all_invoices_tool
 from tools.get_customer import create_get_customer_tool
 from tools.get_job import create_get_job_tool
 from tools.get_open_invoices import create_get_open_invoices_tool
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             create_get_job_tool(repo),
             create_get_customer_tool(repo),
             create_get_open_invoices_tool(repo),
+            create_get_all_invoices_tool(repo),
         ]
     )
     yield

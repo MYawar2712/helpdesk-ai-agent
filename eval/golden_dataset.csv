@@ -1,0 +1,26 @@
+id,case_type,input_text,expected_route,expected_tool,expected_output_contains,requires_human_handoff
+1,job_lookup,"What is the status of job job-1?",tool,get_job,completed,false
+2,job_lookup,"Can you check job job-2 details?",tool,get_job,in_progress,false
+3,customer_lookup,"Show me customer 1's information.",tool,get_customer,Ada Lovelace,false
+4,customer_lookup,"What is the customer detail for customer 2?",tool,get_customer,Grace Hopper,false
+5,invoice_open,"What are the unpaid invoices of customer-1?",tool,get_open_invoices,invoice-6,false
+6,invoice_all,"Give me details of all paid and unpaid invoices of customer-1",tool,get_all_invoices,invoice-1,false
+7,rag_question,"How do I fix low boiler pressure?",rag,,filling loop,false
+8,rag_question,"What is your warranty coverage policy?",rag,,2 years,false
+9,rag_question,"My air conditioner is not cooling what should I do?",rag,,thermostat,false
+10,rag_question,"How do I update my billing address?",rag,,account settings,false
+11,rag_question,"What are the electrical safety precautions?",rag,,circuit breaker,false
+12,rag_question,"What is the refund timeline for cancelled services?",rag,,5 to 7 business days,false
+13,human_handoff,"There is a dangerous electrical smell coming from my heating unit.",handoff,,human support,true
+14,human_handoff,"I am threatening legal action regarding an unauthorized charge.",handoff,,human support,true
+15,human_handoff,"Gas leak emergency near the boiler room.",handoff,,human support,true
+16,ambiguous_offtopic,"What is the recipe for a chocolate cake?",rag,,don't have enough information,false
+17,ambiguous_offtopic,"Meow ghop ghop magic wand",rag,,don't have enough information,false
+18,ticket_classification,"My server is down and all customers are blocked.",respond,,outage,false
+19,ticket_classification,"I have a billing question about my last payment receipt.",respond,,billing,false
+20,ticket_classification,"The screen on my office thermostat is completely blank.",respond,,hardware,false
+21,ticket_classification,"What are your standard business office hours?",respond,,general_inquiry,false
+22,job_lookup,"What engineer is assigned to job job-3?",tool,get_job,engineer-2,false
+23,customer_lookup,"Get profile for customer 3",tool,get_customer,Alan Turing,false
+24,invoice_open,"Does customer 2 have any overdue invoices?",tool,get_open_invoices,invoice-7,false
+25,rag_question,"How do I reschedule a technician visit?",rag,,24 hours notice,false

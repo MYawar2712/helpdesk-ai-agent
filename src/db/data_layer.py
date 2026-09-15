@@ -66,6 +66,14 @@ class HelpdeskDataRepository:
             (customer_id,),
         )
 
+    def get_all_invoices(self, customer_id: str) -> list[dict[str, Any]]:
+        """Return all invoices (paid, unpaid, overdue) for a customer."""
+
+        return self._many(
+            "SELECT * FROM invoices WHERE customer_id = ? ORDER BY due_date, id",
+            (customer_id,),
+        )
+
     def get_customer_overview(self, customer_id: str) -> dict[str, Any] | None:
         """Return a customer profile with jobs, invoices, and chat history."""
 

@@ -15,6 +15,7 @@ from agent.rag_node import RAGNode
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
 from llm.client import LLMClient
+from tools.get_all_invoices import create_get_all_invoices_tool
 from tools.get_customer import create_get_customer_tool
 from tools.get_job import create_get_job_tool
 from tools.get_open_invoices import create_get_open_invoices_tool
@@ -66,6 +67,7 @@ def create_default_tools() -> list[BaseTool]:
             create_get_job_tool(repo),
             create_get_customer_tool(repo),
             create_get_open_invoices_tool(repo),
+            create_get_all_invoices_tool(repo),
         ]
     except Exception:
         return []
@@ -106,22 +108,41 @@ class HelpdeskAgent:
         decision_data = self._client().generate_json(
             """You are a helpdesk routing decision maker. Return JSON only.
 Choose route 'tool' when database information (get_job, get_customer,
-get_open_invoices) is needed, 'rag' when knowledge-base, policy, warranty,
-or technical troubleshooting information is needed, 'handoff' when a human
-must handle the ticket, or 'respond' when a simple general response is needed.
+get_open_invoices, get_all_invoices) is needed. Use get_open_invoices for unpaid
+or overdue invoices. Use get_all_invoices when all paid and unpaid invoices are
+requested. Choose 'rag' when knowledge-base, policy, warranty, or technical
+troubleshooting information is needed, 'handoff' when a human must handle the
+ticket, or 'respond' when a simple general response is needed.
 For tool, provide tool_name and tool_input. For handoff, provide handoff_reason.
 For respond, provide response. Allowed tools: get_job, get_customer,
-get_open_invoices.""",
+get_open_invoices, get_all_invoices.""",
             state["ticket_text"],
         )
-        # Normalize equivalent responses missing route key
+        # Un-nest dictionary in tool_name if the LLM wrapped it
+        if isinstance(decision_data.get("tool_name"), dict):
+            inner = decision_data.pop("tool_name")
+            if "tool_name" in inner:
+                decision_data["tool_name"] = inner["tool_name"]
+            if "tool_input" in inner and isinstance(inner["tool_input"], dict):
+                decision_data["tool_input"] = inner["tool_input"]
+
+        # Normalize equivalent responses missing route key or wrapping tool
         if "route" not in decision_data and "tool" in decision_data:
-            decision_data = {
-                **decision_data,
-                "route": "tool",
-                "tool_name": decision_data["tool"],
-            }
-            decision_data.pop("tool", None)
+            tool_val = decision_data.pop("tool")
+            if isinstance(tool_val, dict):
+                decision_data["route"] = "tool"
+                decision_data["tool_name"] = tool_val.get("tool_name") or tool_val.get(
+                    "name"
+                )
+                decision_data["tool_input"] = (
+                    tool_val.get("tool_input") or tool_val.get("input") or {}
+                )
+            else:
+                decision_data["route"] = "tool"
+                decision_data["tool_name"] = tool_val
+        elif "route" not in decision_data and "tool_name" in decision_data:
+            decision_data["route"] = "tool"
+
         decision = AgentDecision.model_validate(decision_data)
         if decision.route == "tool" and decision.tool_name not in self._tools:
             raise ValueError(f"Unknown or unavailable tool: {decision.tool_name}")
@@ -141,7 +162,7 @@ get_open_invoices.""",
             alias = "job_id" if state["tool_name"] == "get_job" else "customer_id"
             if "id" not in tool_input and alias in tool_input:
                 tool_input["id"] = tool_input.pop(alias)
-        elif state["tool_name"] == "get_open_invoices":
+        elif state["tool_name"] in {"get_open_invoices", "get_all_invoices"}:
             if "customer_id" not in tool_input and "id" in tool_input:
                 tool_input["customer_id"] = tool_input.pop("id")
         result = tool.invoke(tool_input)
