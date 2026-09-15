@@ -1,0 +1,33 @@
+description: Compare Day 12 ticket-classifier prompts V1, V2, and V3
+
+providers:
+  - id: openai:chat:{{env.LLM_MODEL}}
+    config:
+      apiBaseUrl: "{{env.LLM_BASE_URL}}"
+      apiKey: "{{env.LLM_API_KEY}}"
+      temperature: 0
+
+prompts:
+  - file://../../prompts/ticket_classifier/v1.md
+  - file://../../prompts/ticket_classifier/v2.md
+  - file://../../prompts/ticket_classifier/v3.md
+
+tests: file://../test_cases.yaml
+
+defaultTest:
+  options:
+    provider: openai:chat:{{env.LLM_MODEL}}
+    suffix: |
+
+      Ticket:
+      {{input}}
+  assert:
+    - type: javascript
+      value: |
+        const allowed = ["technical", "billing", "scheduling", "warranty", "cancellation", "general"];
+        const answer = output.trim().toLowerCase();
+        return allowed.includes(answer);
+
+commandLineOptions:
+  maxConcurrency: 1
+  cache: true

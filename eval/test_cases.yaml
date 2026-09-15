@@ -1,0 +1,76 @@
+- description: Air conditioner fault
+  vars:
+    input: My air conditioner has stopped cooling completely.
+  assert:
+    - type: icontains
+      value: technical
+
+- description: Duplicate charge
+  vars:
+    input: I was charged twice for my service.
+  assert:
+    - type: icontains
+      value: billing
+
+- description: Reschedule appointment
+  vars:
+    input: Please move my technician appointment from Monday to Wednesday.
+  assert:
+    - type: icontains
+      value: scheduling
+
+- description: Warranty coverage
+  vars:
+    input: Is this compressor repair covered by my warranty?
+  assert:
+    - type: icontains
+      value: warranty
+
+- description: Cancel service
+  vars:
+    input: Please cancel my upcoming service visit.
+  assert:
+    - type: icontains
+      value: cancellation
+
+- description: General opening hours
+  vars:
+    input: What are your standard business hours?
+  assert:
+    - type: icontains
+      value: general
+
+- description: Network outage
+  vars:
+    input: Our office network is down and nobody can connect.
+  assert:
+    - type: icontains
+      value: technical
+
+- description: Payment receipt question
+  vars:
+    input: I have a question about my latest payment receipt.
+  assert:
+    - type: icontains
+      value: billing
+
+- description: Missed technician
+  vars:
+    input: The technician never arrived for my confirmed appointment.
+  assert:
+    - type: icontains
+      value: scheduling
+
+- description: Ambiguous request
+  vars:
+    input: I need help with something related to my account.
+  assert:
+    - type: icontains
+      value: general
+
+- description: Refund request
+  vars:
+    input: How long will my approved service refund take?
+  assert:
+    - type: icontains
+      value: billing

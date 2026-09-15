@@ -17,5 +17,6 @@ build/
 .ipynb_checkpoints/
 logs/*.log
 eval/last_eval_results.json
+eval/.promptfoo-state/
 db/*.sqlite3
 data/
