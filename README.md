@@ -284,6 +284,10 @@ category, priority, confidence, and escalation values through
 
 Exposes `POST /chat` and `GET /` endpoints, integrating LangGraph agent routing, function calling, RAG retrieval, grounding self-verification, and structured Pydantic response models.
 
+## Day 29 safety guardrails
+
+`src/guardrails/` applies deterministic PII redaction, prompt-injection detection, refusal handling, and output checks around `HelpdeskAgent.invoke` without replacing authorization or rewriting the LangGraph. Adversarial cases live in `eval/adversarial_cases.csv` and run through `eval/run_langsmith_eval.py`.
+
 ---
 
 ## Verification Commands

@@ -99,6 +99,8 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         tool_name=tool_name,
         tool_result=tool_result,
         sources=_extract_sources(result),
+        refused=bool(result.get("guardrail_refused")),
+        refusal_reason=result.get("guardrail_reason") or None,
     )
 
 

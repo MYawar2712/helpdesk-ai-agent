@@ -50,6 +50,8 @@ class ChatResponse(BaseModel):
     tool_name: str | None = None
     tool_result: dict[str, Any] | None = None
     sources: list[str] = Field(default_factory=list)
+    refused: bool = False
+    refusal_reason: str | None = None
 
 
 class JobCreateRequest(BaseModel):

@@ -54,3 +54,15 @@ pytest tests/test_eval_dataset.py tests/test_langsmith_eval.py -q
 The dataset and rubric used here are [golden_dataset.csv](golden_dataset.csv)
 and [rubric.md](rubric.md). PromptFoo focuses specifically on prompt-version
 comparison, while the LangSmith evaluator scores the complete agent pipeline.
+
+Day 29 adds [adversarial_cases.csv](adversarial_cases.csv). The same runner
+executes it after the golden set:
+
+```powershell
+python eval/run_langsmith_eval.py
+python eval/run_langsmith_eval.py --adversarial-only
+python eval/run_langsmith_eval.py --golden-only
+```
+
+Adversarial rows are scored PASS/FAIL against expected safety behavior
+(refusal, PII redaction). The golden dataset file is not modified. Result

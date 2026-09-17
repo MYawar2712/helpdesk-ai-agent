@@ -15,6 +15,12 @@ from agent.rag_node import RAGNode
 from agent.tracing import traceable
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
+from guardrails.checks import (
+    apply_output_guardrails,
+    build_refusal_state,
+    check_input,
+    check_output,
+)
 from llm.client import LLMClient
 from tools.get_all_invoices import create_get_all_invoices_tool
 from tools.get_customer import create_get_customer_tool
@@ -103,10 +109,24 @@ class HelpdeskAgent:
 
     @traceable(name="helpdesk_agent")
     def invoke(self, ticket_text: str) -> AgentState:
-        """Run the graph for one support ticket."""
+        """Run input guardrails, the existing graph, then output guardrails."""
         if not ticket_text.strip():
             raise ValueError("ticket_text must not be empty")
-        return self.graph.invoke({"ticket_text": ticket_text})
+        inbound = check_input(ticket_text)
+        if not inbound.allowed:
+            return build_refusal_state(
+                redacted_text=inbound.redacted_text,
+                reason=inbound.reason,
+                category=inbound.category,
+                pii_types=inbound.pii_types,
+            )
+        state = self.graph.invoke({"ticket_text": inbound.redacted_text})
+        outbound = check_output(
+            state.get("final_response") or state.get("response") or "",
+            input_text=inbound.redacted_text,
+            state=state,
+        )
+        return apply_output_guardrails(state, outbound)
 
     def _client(self) -> DecisionClient:
         return self._llm_client or LLMClient()
