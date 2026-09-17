@@ -1,0 +1,57 @@
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+.venv-temp/
+venv/
+
+# ── Git ────────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Secrets ────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python cache / bytecode ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Build / packaging artefacts ───────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+src/helpdesk_ai_agent.egg-info/
+
+# ── Test artefacts ─────────────────────────────────────────────────────────────
+tests/
+.pytest_cache/
+.pytest-tmp*/
+pytest-cache-files-*/
+.tmp_pytest/
+.coverage
+htmlcov/
+
+# ── Linter caches ─────────────────────────────────────────────────────────────
+.ruff_cache/
+.pre-commit-cache/
+
+# ── Data / vector store (re-built at runtime) ─────────────────────────────────
+data/
+
+# ── Notebooks ─────────────────────────────────────────────────────────────────
+notebooks/
+*.ipynb
+.ipynb_checkpoints/
+
+# ── Evaluation artefacts ──────────────────────────────────────────────────────
+eval/
+
+# ── Documentation & logs ──────────────────────────────────────────────────────
+docs/
+logs/
+README.md
+
+# ── Temporary dirs left by pytest runs ───────────────────────────────────────
+tmpltr_wcro/

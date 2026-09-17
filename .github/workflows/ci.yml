@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  ci:
+    name: Lint · Test · Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ──────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 3. Install dependencies ──────────────────────────────────────────────
+      # Install from requirements.txt (all runtime + dev deps) then install the
+      # local package in editable mode so src/ imports resolve — same setup as
+      # local development and the Dockerfile.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      # ── 4. Lint ──────────────────────────────────────────────────────────────
+      # Uses ruff, the project's configured linter (pyproject.toml [tool.ruff]).
+      # Runs check-only (no --fix) so the step fails on any lint violation.
+      - name: Lint with ruff
+        run: ruff check .
+
+      # ── 5. Test ──────────────────────────────────────────────────────────────
+      # pytest uses the project's own config (pyproject.toml [tool.pytest]):
+      #   testpaths = ["tests"]
+      #   pythonpath  = [".", "src"]
+      # Environment variables for tests that reference LLM/LangSmith APIs are
+      # provided via GitHub Actions Secrets (optional — tests mock external calls).
+      - name: Run pytest
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LANGCHAIN_TRACING_V2: "false"
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+        run: pytest
+
+      # ── 6. Docker build ──────────────────────────────────────────────────────
+      # Validates that the Dockerfile builds successfully. No push step — the
+      # image is not published to a registry in this workflow.
+      - name: Build Docker image
+        run: docker build -t helpdesk-ai-agent .
