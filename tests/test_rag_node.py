@@ -76,6 +76,16 @@ def test_relevant_documents_retrieved() -> None:
         mock_search.assert_called_once()
 
 
+def test_retriever_falls_back_to_keyword_search_when_vector_search_fails() -> None:
+    """Local KB keyword search answers when Chroma/embeddings are unavailable."""
+    with patch("agent.rag_node.search_knowledge_base", side_effect=RuntimeError):
+        retriever = RAGRetriever(k=2)
+        retrieved = retriever.retrieve("burning smell from my AC")
+
+    assert retrieved
+    assert retrieved[0].metadata["source"] == "electrical_safety.md"
+
+
 def test_retrieved_context_reaches_llm() -> None:
     """Test retrieved chunks are properly formatted and injected into LLM prompt."""
     mock_llm = MockLLMClient()

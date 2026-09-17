@@ -123,3 +123,146 @@ def test_chat_endpoint_agent_failure() -> None:
 
     assert response.status_code == 500
     assert "detail" in response.json()
+
+
+def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
+    """Customer inquiry drafts an AI reply but leaves it awaiting review."""
+    mock_agent = MagicMock()
+    mock_agent.invoke.return_value = {
+        "route": "respond",
+        "response": "Thanks for reaching out. We can help with that.",
+        "final_response": "Thanks for reaching out. We can help with that.",
+        "tool_name": "",
+        "tool_result": {},
+    }
+
+    with TestClient(app) as client:
+        app.state.agent = mock_agent
+        response = client.post(
+            "/api/v1/customer-inquiries/draft-reply",
+            json={
+                "ticket_id": "ticket-1",
+                "customer_id": "customer-1",
+                "message": "Hi, can you help me understand your opening hours?",
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["agent_response"] == "Thanks for reaching out. We can help with that."
+    assert body["route"] == "respond"
+    assert body["draft"]["status"] == "human_review"
+    assert body["draft"]["original_ai_draft"] == body["agent_response"]
+    mock_agent.invoke.assert_called_once_with(
+        "Customer ID: customer-1\n"
+        "Ticket ID: ticket-1\n"
+        "Message: Hi, can you help me understand your opening hours?"
+    )
+
+
+def test_customer_inquiry_agent_failure_creates_reviewable_handoff_draft() -> None:
+    """Agent failures become reviewable drafts instead of raw 500s."""
+    mock_agent = MagicMock()
+    mock_agent.invoke.side_effect = RuntimeError("LLM unavailable")
+
+    with TestClient(app) as client:
+        app.state.agent = mock_agent
+        response = client.post(
+            "/api/v1/customer-inquiries/draft-reply",
+            json={
+                "ticket_id": "ticket-1",
+                "customer_id": "customer-1",
+                "message": "can u tell me your business hours",
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["route"] == "handoff"
+    assert body["draft"]["status"] == "human_review"
+    assert "human support" in body["agent_response"]
+
+
+def test_customer_inquiry_without_ticket_id_creates_new_ticket() -> None:
+    """When ticket_id is omitted, draft-reply creates a brand new ticket in SQLite."""
+    mock_agent = MagicMock()
+    mock_agent.invoke.return_value = {
+        "final_response": "Here is information on your inquiry.",
+        "route": "respond",
+    }
+
+    with TestClient(app) as client:
+        app.state.agent = mock_agent
+        response = client.post(
+            "/api/v1/customer-inquiries/draft-reply",
+            json={
+                "customer_id": "customer-1",
+                "message": "I need help with my new subscription",
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    new_ticket_id = body["draft"]["ticket_id"]
+    assert new_ticket_id.startswith("ticket-")
+    assert new_ticket_id != "ticket-1"
+    assert body["agent_response"] == "Here is information on your inquiry."
+
+
+def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> None:
+    """Customer inquiry with scheduling intent creates job immediately and returns
+    confirmation."""
+    mock_agent = MagicMock()
+    mock_agent.invoke.return_value = {
+        "final_response": "We can schedule an HVAC technician to repair your AC.",
+        "route": "respond",
+    }
+
+    with TestClient(app) as client:
+        app.state.agent = mock_agent
+        response = client.post(
+            "/api/v1/customer-inquiries/draft-reply",
+            json={
+                "customer_id": "customer-1",
+                "message": (
+                    "I want to make a job lock for my AC repair make it on "
+                    "monday at 9 am"
+                ),
+            },
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        # Job is created immediately, not deferred to send
+        assert body["route"] == "respond"
+        assert body["tool_name"] == "schedule_job"
+        assert (
+            "scheduled" in body["agent_response"].lower()
+            or "job id" in body["agent_response"].lower()
+        )
+        assert body["draft"]["status"] == "human_review"
+        # Agent should NOT be invoked for scheduling requests
+        mock_agent.invoke.assert_not_called()
+
+
+def test_create_job_for_ticket_api_endpoint() -> None:
+    """POST /api/v1/tickets/{ticket_id}/create-job creates job and assigns engineer."""
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/tickets/ticket-1/create-job",
+            json={
+                "customer_id": "customer-1",
+                "title": "Onsite Electrical Repair",
+                "description": "Inspect main breaker box for ticket-1.",
+                "required_skill": "electrical",
+                "service_area": "New York",
+                "priority": "high",
+            },
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert "ticket" in data
+    assert "job" in data
+    assert data["job"]["assigned_engineer_id"] is not None
+    assert data["ticket"]["job_id"] == data["job"]["id"]

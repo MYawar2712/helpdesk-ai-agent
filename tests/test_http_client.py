@@ -86,7 +86,8 @@ def test_fetch_post_raises_not_found_without_retry() -> None:
     with pytest.raises(ResourceNotFoundError):
         HTTPClient().fetch_post(1)
 
-    assert len(responses.calls) == 1
+    post_calls = [c for c in responses.calls if POST_URL in c.request.url]
+    assert len(post_calls) == 1
 
 
 @responses.activate
@@ -101,7 +102,8 @@ def test_fetch_post_retries_server_errors_then_succeeds() -> None:
     post = HTTPClient().fetch_post(1)
 
     assert post.title == "Recovered"
-    assert len(responses.calls) == 2
+    post_calls = [c for c in responses.calls if POST_URL in c.request.url]
+    assert len(post_calls) == 2
 
 
 @pytest.mark.parametrize("method", ["fetch_post", "fetch_user"])

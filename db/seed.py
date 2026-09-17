@@ -23,9 +23,42 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         "CHECK (confidence >= 0.0 AND confidence <= 1.0)",
         "needs_escalation": "ALTER TABLE tickets ADD COLUMN needs_escalation "
         "INTEGER CHECK (needs_escalation IN (0, 1))",
+        "assigned_engineer_id": (
+            "ALTER TABLE tickets ADD COLUMN assigned_engineer_id TEXT"
+        ),
+        "job_id": "ALTER TABLE tickets ADD COLUMN job_id TEXT",
+        "escalation_reason": "ALTER TABLE tickets ADD COLUMN escalation_reason TEXT",
     }
     for column, statement in migrations.items():
         if column not in ticket_columns:
+            connection.execute(statement)
+    customer_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(customers)")
+    }
+    if "verification_status" not in customer_columns:
+        connection.execute(
+            "ALTER TABLE customers ADD COLUMN verification_status "
+            "TEXT NOT NULL DEFAULT 'verified'"
+        )
+    job_columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+    for column, statement in {
+        "service_area": "ALTER TABLE jobs ADD COLUMN service_area TEXT",
+        "required_skill": "ALTER TABLE jobs ADD COLUMN required_skill TEXT",
+    }.items():
+        if column not in job_columns:
+            connection.execute(statement)
+    invoice_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(invoices)")
+    }
+    invoice_migrations = {
+        "subtotal": (
+            "ALTER TABLE invoices ADD COLUMN subtotal NUMERIC NOT NULL DEFAULT 0"
+        ),
+        "tax": "ALTER TABLE invoices ADD COLUMN tax NUMERIC NOT NULL DEFAULT 0",
+        "total": "ALTER TABLE invoices ADD COLUMN total NUMERIC NOT NULL DEFAULT 0",
+    }
+    for column, statement in invoice_migrations.items():
+        if column not in invoice_columns:
             connection.execute(statement)
 
 
@@ -33,7 +66,11 @@ def seed_database(connection: sqlite3.Connection) -> None:
     """Replace existing rows with deterministic relational sample data."""
 
     initialize_database(connection)
+    connection.execute("DELETE FROM sent_emails")
+    connection.execute("DELETE FROM email_drafts")
     connection.execute("DELETE FROM invoices")
+    connection.execute("DELETE FROM engineer_skills")
+    connection.execute("DELETE FROM engineers")
     connection.execute("DELETE FROM tickets")
     connection.execute("DELETE FROM jobs")
     connection.execute("DELETE FROM customers")
@@ -81,6 +118,108 @@ def seed_database(connection: sqlite3.Connection) -> None:
         customers,
     )
 
+    engineers = [
+        (
+            "engineer-1",
+            "Marie Curie",
+            "marie@example.com",
+            "+44-20-5555-0201",
+            1,
+            "London",
+            1,
+        ),
+        (
+            "engineer-2",
+            "Nikola Tesla",
+            "nikola@example.com",
+            "+1-212-555-0202",
+            1,
+            "New York",
+            2,
+        ),
+        (
+            "engineer-3",
+            "Rosalind Franklin",
+            "rosalind@example.com",
+            "+44-20-5555-0203",
+            1,
+            "London",
+            0,
+        ),
+        (
+            "engineer-4",
+            "Thomas Edison",
+            "edison@example.com",
+            "+1-212-555-0204",
+            1,
+            "New York",
+            0,
+        ),
+        (
+            "engineer-5",
+            "Hedy Lamarr",
+            "hedy@example.com",
+            "+1-312-555-0205",
+            1,
+            "Chicago",
+            1,
+        ),
+        (
+            "engineer-6",
+            "James Watt",
+            "watt@example.com",
+            "+44-20-5555-0206",
+            1,
+            "London",
+            0,
+        ),
+        (
+            "engineer-7",
+            "Linus Pauling",
+            "linus@example.com",
+            "+1-415-555-0207",
+            1,
+            "San Francisco",
+            0,
+        ),
+        (
+            "engineer-8",
+            "Chien-Shiung Wu",
+            "wu@example.com",
+            "+1-206-555-0208",
+            1,
+            "Seattle",
+            1,
+        ),
+    ]
+    connection.executemany(
+        """INSERT INTO engineers
+        (id, name, email, phone, active, service_area, current_workload)
+        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        engineers,
+    )
+    connection.executemany(
+        "INSERT INTO engineer_skills (engineer_id, skill) VALUES (?, ?)",
+        [
+            ("engineer-1", "technician"),
+            ("engineer-1", "HVAC"),
+            ("engineer-2", "electrical"),
+            ("engineer-2", "technician"),
+            ("engineer-3", "plumber"),
+            ("engineer-3", "sanitary"),
+            ("engineer-4", "electrical"),
+            ("engineer-4", "HVAC"),
+            ("engineer-5", "technician"),
+            ("engineer-5", "electrical"),
+            ("engineer-6", "plumber"),
+            ("engineer-6", "HVAC"),
+            ("engineer-7", "sanitary"),
+            ("engineer-7", "plumber"),
+            ("engineer-8", "technician"),
+            ("engineer-8", "HVAC"),
+        ],
+    )
+
     jobs = [
         (
             f"job-{number}",
@@ -97,9 +236,12 @@ def seed_database(connection: sqlite3.Connection) -> None:
     connection.executemany(
         """INSERT INTO jobs
         (id, customer_id, title, description, status, priority,
-        assigned_engineer_id, scheduled_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        jobs,
+        assigned_engineer_id, scheduled_at, service_area, required_skill)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (*job, "London" if i % 2 else "New York", "HVAC")
+            for i, job in enumerate(jobs, 1)
+        ],
     )
 
     invoices = [
@@ -126,9 +268,17 @@ def seed_database(connection: sqlite3.Connection) -> None:
     ]
     connection.executemany(
         """INSERT INTO invoices
-        (id, customer_id, job_id, amount, status, due_date)
-        VALUES (?, ?, ?, ?, ?, ?)""",
-        invoices,
+        (id, customer_id, job_id, amount, status, due_date, subtotal, tax, total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (
+                *invoice,
+                invoice[3],
+                round(float(invoice[3]) * 0.2, 2),
+                round(float(invoice[3]) * 1.2, 2),
+            )
+            for invoice in invoices
+        ],
     )
 
     tickets = [

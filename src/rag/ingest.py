@@ -98,3 +98,34 @@ def search_knowledge_base(
         persist_directory=str(persist_directory),
     )
     return vector_store.similarity_search(query, k=k)
+
+
+def keyword_search_knowledge_base(
+    query: str,
+    *,
+    directory: Path = DEFAULT_KNOWLEDGE_BASE,
+    k: int = 4,
+) -> list[Document]:
+    """Return locally matched articles when vector search is unavailable."""
+    if not query.strip():
+        raise ValueError("query must not be empty")
+    if k < 1:
+        raise ValueError("k must be greater than zero")
+
+    query_terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+    scored_documents: list[tuple[int, Document]] = []
+    for document in load_knowledge_articles(directory):
+        haystack = " ".join(
+            [
+                document.page_content,
+                str(document.metadata.get("title", "")),
+                str(document.metadata.get("topic", "")),
+            ]
+        ).lower()
+        article_terms = set(re.findall(r"[a-z0-9]+", haystack))
+        score = len(query_terms & article_terms)
+        if score:
+            scored_documents.append((score, document))
+
+    scored_documents.sort(key=lambda item: item[0], reverse=True)
+    return [document for _, document in scored_documents[:k]]

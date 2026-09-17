@@ -122,3 +122,14 @@ def test_handoff_route_skips_tools_and_produces_human_message() -> None:
     assert "human support" in result["final_response"]
     assert "safety concern" in result["final_response"]
     client.generate.assert_not_called()
+
+
+def test_dispute_keywords_force_handoff() -> None:
+    client = Mock()
+    agent = HelpdeskAgent(llm_client=client)
+
+    result = agent.invoke("I have a billing issue got charged twice")
+
+    assert result["route"] == "handoff"
+    assert "human support" in result["final_response"].lower()
+    client.generate_json.assert_not_called()

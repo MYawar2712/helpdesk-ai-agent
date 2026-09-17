@@ -20,6 +20,7 @@ from tools.get_all_invoices import create_get_all_invoices_tool
 from tools.get_customer import create_get_customer_tool
 from tools.get_job import create_get_job_tool
 from tools.get_open_invoices import create_get_open_invoices_tool
+from tools.schedule_job import create_schedule_job_tool
 
 
 class AgentState(TypedDict, total=False):
@@ -34,6 +35,9 @@ class AgentState(TypedDict, total=False):
     handoff_reason: str
     final_response: str
     rag_result: Any
+    predicted_category: str
+    predicted_priority: str
+    confidence_score: float
 
 
 class AgentDecision(BaseModel):
@@ -69,6 +73,7 @@ def create_default_tools() -> list[BaseTool]:
             create_get_customer_tool(repo),
             create_get_open_invoices_tool(repo),
             create_get_all_invoices_tool(repo),
+            create_schedule_job_tool(),
         ]
     except Exception:
         return []
@@ -108,17 +113,81 @@ class HelpdeskAgent:
 
     @traceable(name="decide_node")
     def _decision_node(self, state: AgentState) -> AgentState:
-        decision_data = self._client().generate_json(
-            """You are a helpdesk routing decision maker. Return JSON only.
+        category = state.get("predicted_category")
+        priority = state.get("predicted_priority")
+        confidence = state.get("confidence_score", 1.0)
+        if not category or not priority:
+            try:
+                from ml.classifier import TicketClassifier
+
+                pred = TicketClassifier().predict(state["ticket_text"])
+                category = pred.category
+                priority = pred.priority
+                confidence = pred.confidence_score
+            except Exception:
+                category, priority, confidence = "general_inquiry", "medium", 1.0
+
+        dispute_keywords = (
+            "refund",
+            "chargeback",
+            "legal",
+            "overcharge",
+            "double charge",
+            "charged twice",
+            "double charged",
+            "billing issue",
+            "billing dispute",
+            "wrong charge",
+            "incorrect charge",
+            "unauthorized charge",
+            "duplicate charge",
+            "overcharged",
+        )
+        lowered = state["ticket_text"].lower()
+        if any(k in lowered for k in dispute_keywords):
+            return {
+                **state,
+                "predicted_category": category,
+                "predicted_priority": priority,
+                "confidence_score": confidence,
+                "route": "handoff",
+                "tool_name": "",
+                "tool_input": {},
+                "response": (
+                    "I'm handing this ticket to human support. Reason: "
+                    "Financial / billing dispute requires human intervention."
+                ),
+                "handoff_reason": (
+                    "Financial / billing dispute requires human intervention"
+                ),
+            }
+
+        decision_prompt = f"""You are a helpdesk routing decision maker.
+Return JSON only.
+ML Classification Context: Category={category}, Priority={priority},
+Confidence={confidence:.2f}
 Choose route 'tool' when database information (get_job, get_customer,
 get_open_invoices, get_all_invoices) is needed. Use get_open_invoices for unpaid
 or overdue invoices. Use get_all_invoices when all paid and unpaid invoices are
 requested. Choose 'rag' when knowledge-base, policy, warranty, or technical
-troubleshooting information is needed, 'handoff' when a human must handle the
-ticket, or 'respond' when a simple general response is needed.
+troubleshooting information is needed. Choose 'respond' when drafting a customer reply
+or handling job requests, job locks, or service scheduling.
+When the customer mentions a specific time for a job (e.g., "Monday at 9am",
+"Friday at 3pm", "tomorrow at 10am"), use the schedule_job tool with the exact
+scheduling text as input, then respond confirming the job will be scheduled for that
+time.
+When 'respond' is chosen for job locks or service requests with a specified time,
+confirm directly that the job has been scheduled for that date/time. Do NOT ask the
+customer to re-confirm the time. Choose 'handoff' ONLY for explicit safety emergencies
+or non-standard human support escalations.
+If Customer ID or Ticket ID is present in the input, include customer_id or id in
+tool_input.
 For tool, provide tool_name and tool_input. For handoff, provide handoff_reason.
 For respond, provide response. Allowed tools: get_job, get_customer,
-get_open_invoices, get_all_invoices.""",
+get_open_invoices, get_all_invoices, schedule_job."""
+
+        decision_data = self._client().generate_json(
+            decision_prompt,
             state["ticket_text"],
         )
         # Un-nest dictionary in tool_name if the LLM wrapped it
@@ -151,6 +220,9 @@ get_open_invoices, get_all_invoices.""",
             raise ValueError(f"Unknown or unavailable tool: {decision.tool_name}")
         return {
             **state,
+            "predicted_category": category,
+            "predicted_priority": priority,
+            "confidence_score": confidence,
             "route": decision.route,
             "tool_name": decision.tool_name or "",
             "tool_input": decision.tool_input,

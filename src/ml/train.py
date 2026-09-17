@@ -34,6 +34,7 @@ SYNTHETIC_RECORDS = [
     ("need a copy of my monthly invoice", "billing", "low"),
     ("billing address needs to be updated", "billing", "low"),
     ("service completely down across all sites", "outage", "urgent"),
+    ("server completely down across all sites", "outage", "urgent"),
     ("production outage all users cannot connect", "outage", "urgent"),
     ("network unavailable since this morning", "outage", "high"),
     ("website is returning errors for customers", "outage", "high"),
@@ -51,6 +52,9 @@ SYNTHETIC_RECORDS = [
     ("server disk has failed and is beeping", "hardware", "urgent"),
     ("printer is offline and cannot print", "hardware", "medium"),
     ("new workstation equipment request", "hardware", "low"),
+    ("ac repair job lock technician service request", "hardware", "medium"),
+    ("air conditioning unit broken needs repair visit", "hardware", "medium"),
+    ("schedule job lock for ac maintenance technician", "hardware", "medium"),
 ]
 
 

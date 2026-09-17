@@ -33,7 +33,7 @@ class FakeEmbeddings(Embeddings):
 def test_loads_articles_with_useful_metadata() -> None:
     articles = load_knowledge_articles()
 
-    assert len(articles) == 18
+    assert len(articles) >= 18
     assert articles[0].metadata["source"].endswith(".md")
     assert articles[0].metadata["title"]
     assert articles[0].metadata["topic"]

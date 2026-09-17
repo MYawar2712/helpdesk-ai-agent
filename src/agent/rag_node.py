@@ -14,6 +14,7 @@ from agent.tracing import traceable
 from llm.client import LLMClient
 from rag.ingest import (
     DEFAULT_PERSIST_DIRECTORY,
+    keyword_search_knowledge_base,
     search_knowledge_base,
 )
 
@@ -88,7 +89,13 @@ class RAGRetriever:
                 k=self.k,
                 collection_name=self.collection_name,
             )
-            return chunks
+            if chunks:
+                return chunks
+        except Exception:
+            pass
+
+        try:
+            return keyword_search_knowledge_base(query=query, k=self.k)
         except Exception:
             return []
 

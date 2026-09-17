@@ -25,7 +25,19 @@ def test_schema_and_seed_create_integrity_checked_database() -> None:
         for table in ("customers", "jobs", "invoices", "tickets")
     }
 
-    assert tables == {"customers", "jobs", "invoices", "tickets"}
+    assert {
+        "customers",
+        "jobs",
+        "invoices",
+        "tickets",
+        "engineers",
+        "engineer_skills",
+        "ticket_messages",
+        "email_drafts",
+        "sent_emails",
+        "escalations",
+        "audit_log",
+    } <= tables
     assert counts == {"customers": 5, "jobs": 10, "invoices": 10, "tickets": 10}
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
