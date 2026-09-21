@@ -254,6 +254,13 @@ get_open_invoices, get_all_invoices, schedule_job."""
     def _tool_node(self, state: AgentState) -> AgentState:
         tool = self._tools[state["tool_name"]]
         tool_input = dict(state.get("tool_input", {}))
+
+        # Extract requesting customer_id from ticket_text context
+        import re
+
+        match = re.search(r"Customer ID:\s*([^\n]+)", state.get("ticket_text", ""))
+        requesting_customer_id = match.group(1).strip() if match else None
+
         if state["tool_name"] in {"get_job", "get_customer"}:
             alias = "job_id" if state["tool_name"] == "get_job" else "customer_id"
             if "id" not in tool_input and alias in tool_input:
@@ -269,7 +276,60 @@ get_open_invoices, get_all_invoices, schedule_job."""
                 tool_input["customer_id"], str
             ):
                 tool_input["customer_id"] = str(tool_input["customer_id"])
+
+        # Pre-check: prevent querying another customer's ID explicitly
+        target_id = tool_input.get("id") or tool_input.get("customer_id")
+        if (
+            requesting_customer_id
+            and target_id
+            and target_id.startswith("customer-")
+            and target_id != requesting_customer_id
+        ):
+            _privacy_err = (
+                "Privacy policy restriction: For privacy and "
+                "security reasons, I cannot provide job details "
+                "or information belonging to another customer."
+            )
+            return {
+                **state,
+                "tool_result": {
+                    "found": False,
+                    "error": _privacy_err,
+                    "forbidden": True,
+                },
+            }
+
         result = tool.invoke(tool_input)
+
+        if (
+            state["tool_name"] == "get_job"
+            and isinstance(result, dict)
+            and not result.get("found")
+            and "customer_id" in tool_input
+        ):
+            cand_cust = tool_input["customer_id"]
+            if not requesting_customer_id or cand_cust == requesting_customer_id:
+                fallback_res = tool.invoke({"id": cand_cust})
+                if isinstance(fallback_res, dict) and fallback_res.get("found"):
+                    result = fallback_res
+
+        # Post-check: verify returned resource belongs to requesting_customer_id
+        if requesting_customer_id and isinstance(result, dict) and result.get("found"):
+            resource = result.get("job") or result.get("customer")
+            if isinstance(resource, dict):
+                res_cust_id = resource.get("customer_id") or resource.get("id")
+                if res_cust_id and res_cust_id != requesting_customer_id:
+                    _post_privacy_err = (
+                        "Privacy policy restriction: For privacy and "
+                        "security reasons, I cannot provide job details "
+                        "or information belonging to another customer."
+                    )
+                    result = {
+                        "found": False,
+                        "error": _post_privacy_err,
+                        "forbidden": True,
+                    }
+
         if not isinstance(result, dict):
             raise TypeError("Agent tools must return dictionary results")
         return {**state, "tool_result": result}

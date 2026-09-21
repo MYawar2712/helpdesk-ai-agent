@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from utils.date_parser import parse_natural_datetime
+
 
 class AuthorizationError(PermissionError):
     """Raised when an actor attempts to access another customer's resource."""
@@ -300,6 +302,56 @@ class HelpdeskOperationsService:
         )
         self.connection.commit()
         return dict(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,)))
+
+    def cancel_customer_scheduled_jobs(
+        self, customer_id: str, job_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Cancel active scheduled or pending jobs for a customer,
+        optionally targeting a specific job_id."""
+        if job_id:
+            if job_id.isdigit():
+                job_id = f"job-{job_id}"
+            jobs = self.connection.execute(
+                """SELECT * FROM jobs
+                WHERE id = ? AND customer_id = ?
+                AND status IN ('scheduled', 'pending', 'in_progress')""",
+                (job_id, customer_id),
+            ).fetchall()
+            if jobs:
+                self.connection.execute(
+                    """UPDATE jobs SET status = 'cancelled'
+                    WHERE id = ? AND customer_id = ?
+                    AND status IN ('scheduled', 'pending', 'in_progress')""",
+                    (job_id, customer_id),
+                )
+        else:
+            jobs = self.connection.execute(
+                """SELECT * FROM jobs
+                WHERE customer_id = ?
+                AND status IN ('scheduled', 'pending', 'in_progress')""",
+                (customer_id,),
+            ).fetchall()
+            if jobs:
+                self.connection.execute(
+                    """UPDATE jobs SET status = 'cancelled'
+                    WHERE customer_id = ?
+                    AND status IN ('scheduled', 'pending', 'in_progress')""",
+                    (customer_id,),
+                )
+
+        if jobs:
+            for j in jobs:
+                self._audit(
+                    "customer",
+                    customer_id,
+                    "job_cancelled",
+                    "job",
+                    j["id"],
+                    customer_id,
+                    {"previous_status": j["status"]},
+                )
+            self.connection.commit()
+        return [dict(j) for j in jobs]
 
     def find_best_engineer(
         self, *, required_skill: str, service_area: str
@@ -603,6 +655,8 @@ class HelpdeskOperationsService:
         ):
             inferred_skill = infer_required_skill(ticket["description"])
             if inferred_skill is not None:
+                parsed_dt = parse_natural_datetime(ticket["description"])
+                scheduled_at_iso = parsed_dt.isoformat() if parsed_dt else None
                 try:
                     self.create_job_for_ticket(
                         CustomerIdentity(customer_id=draft["customer_id"]),
@@ -611,6 +665,7 @@ class HelpdeskOperationsService:
                         description=ticket["description"],
                         required_skill=inferred_skill,
                         service_area="London",
+                        scheduled_at=scheduled_at_iso,
                     )
                 except Exception:
                     pass

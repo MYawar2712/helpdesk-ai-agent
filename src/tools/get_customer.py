@@ -18,11 +18,14 @@ def get_customer(repository: HelpdeskDataRepository, id: str) -> dict[str, Any]:
     customer = repository.get_customer(id)
     if customer is None:
         return {"found": False, "customer": None, "error": "Customer not found"}
+    overview = repository.get_customer_overview(id)
+    jobs = overview.get("jobs", []) if overview else []
     return {
         "found": True,
         "customer": {
             field: customer[field] for field in ("id", "name", "company", "created_at")
         },
+        "jobs": jobs,
     }
 
 

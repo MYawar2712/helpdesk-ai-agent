@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class LLMConfigurationError(ValueError):
@@ -27,7 +27,7 @@ class LLMConfig:
     @classmethod
     def from_environment(cls) -> LLMConfig:
         api_key = os.getenv("LLM_API_KEY", "").strip()
-        model = os.getenv("LLM_MODEL", "qwen-flash").strip()
+        model = os.getenv("LLM_MODEL", "qwen3.8-omni-flash").strip()
         if not api_key:
             raise LLMConfigurationError("LLM_API_KEY is not configured")
         if not model:

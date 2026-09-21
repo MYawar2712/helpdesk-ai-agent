@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -31,9 +32,7 @@ from services.operations import (
     BusinessRuleError,
     CustomerIdentity,
     HelpdeskOperationsService,
-    infer_required_skill,
 )
-from utils.date_parser import parse_natural_datetime
 from workers.tasks import process_ticket_async
 
 router = APIRouter()
@@ -299,91 +298,41 @@ async def draft_customer_inquiry_reply(
             _handle_operation_error(err)
             raise
 
-    inferred_skill = infer_required_skill(payload.message)
-
-    schedule_keywords = (
-        "schedule",
-        "job lock",
-        "lock job",
-        "book",
-        "appointment",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-        "tomorrow",
-        "today",
-        "next week",
-        "at 9",
-        "at 10",
-        "at 11",
-        "at 12",
-        "at 1",
-        "at 2",
-        "at 3",
-        "at 4",
-        "at 5",
-        "at 6",
-        "at 7",
-        "at 8",
-    )
-    lowered_msg = payload.message.lower()
-    has_schedule_intent = inferred_skill is not None and any(
-        kw in lowered_msg for kw in schedule_keywords
-    )
-
-    if has_schedule_intent:
-        parsed_dt = parse_natural_datetime(payload.message)
-        scheduled_at_iso = parsed_dt.isoformat() if parsed_dt else None
-
-        if scheduled_at_iso and inferred_skill:
-            try:
-                job_result = _operations(request).create_job_for_ticket(
-                    CustomerIdentity(customer_id=payload.customer_id),
-                    ticket_id=ticket_id,
-                    title=f"{inferred_skill} Service Visit",
-                    description=payload.message,
-                    required_skill=inferred_skill,
-                    service_area="London",
-                    scheduled_at=scheduled_at_iso,
-                )
-                job = job_result.get("job", {})
-                job_id = job.get("id", "unknown")
-                day_name = parsed_dt.strftime("%A") if parsed_dt else ""
-                if parsed_dt:
-                    time_str = parsed_dt.strftime("%I:%M %p").lstrip("0")
-                else:
-                    time_str = ""
-                response_text = (
-                    f"Great news! I've scheduled your {inferred_skill} "
-                    f"service visit for {day_name} at {time_str}. "
-                    f"Your job ID is {job_id}. An engineer has been "
-                    f"assigned and will arrive at the scheduled time."
-                )
-                draft = _operations(request).create_email_draft(
-                    ticket_id=ticket_id,
-                    customer_id=payload.customer_id,
-                    ai_draft=response_text,
-                )
-                return CustomerInquiryDraftResponse(
-                    draft=draft,
-                    agent_response=response_text,
-                    route="respond",
-                    tool_name="schedule_job",
-                    sources=[],
-                )
-            except Exception as err:
-                _handle_operation_error(err)
-
     job_context_str: str | None = None
-    if inferred_skill is not None:
-        job_context_str = (
-            f"Inferred Service Need: '{inferred_skill}' repair/service. "
-            "(Action: job created and engineer assigned on approval & send)."
+    lowered_msg = payload.message.lower()
+    cancel_keywords = ("cancel", "cancellation", "abort", "drop service")
+    if any(k in lowered_msg for k in cancel_keywords):
+        target_job_match = re.search(
+            r"\b(job-[a-f0-9-]+|job-\d+|\bjob\s+#?(\d+))\b",
+            payload.message,
+            re.IGNORECASE,
         )
+        target_job_id = target_job_match.group(1).strip() if target_job_match else None
+        cancelled_jobs = _operations(request).cancel_customer_scheduled_jobs(
+            payload.customer_id, job_id=target_job_id
+        )
+        if cancelled_jobs:
+            job_ids_str = ", ".join(j["id"] for j in cancelled_jobs)
+            job_context_str = (
+                f"Action taken: Successfully cancelled job(s) "
+                f"[{job_ids_str}] in the database for customer "
+                f"{payload.customer_id}. Please confirm the "
+                f"cancellation to the customer."
+            )
+        else:
+            if target_job_id:
+                job_context_str = (
+                    f"Action taken: Customer requested cancellation "
+                    f"for specific job '{target_job_id}', but no active "
+                    f"matching job belonging to customer "
+                    f"{payload.customer_id} was found."
+                )
+            else:
+                job_context_str = (
+                    f"Action taken: Customer requested cancellation. "
+                    f"Confirmed cancellation request for customer "
+                    f"{payload.customer_id}."
+                )
 
     result: dict[str, Any] = {
         "route": "handoff",
@@ -437,12 +386,15 @@ async def draft_customer_inquiry_reply(
 async def approve_email_draft(
     draft_id: str, payload: EmailDraftApprovalRequest, request: Request
 ) -> dict[str, Any]:
-    """Approve an AI email draft after human review."""
+    """Approve an AI email draft after human review and automatically send it."""
     try:
-        return _operations(request).approve_email_draft(
+        _operations(request).approve_email_draft(
             draft_id=draft_id,
             reviewer=payload.reviewer,
             edited_body=payload.edited_body,
+        )
+        return _operations(request).send_approved_email(
+            draft_id=draft_id, sender=payload.reviewer
         )
     except Exception as err:
         _handle_operation_error(err)

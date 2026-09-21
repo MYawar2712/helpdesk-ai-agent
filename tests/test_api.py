@@ -233,16 +233,10 @@ def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> N
 
         assert response.status_code == 201
         body = response.json()
-        # Job is created immediately, not deferred to send
+        # Job creation is deferred until send; draft goes through human review
         assert body["route"] == "respond"
-        assert body["tool_name"] == "schedule_job"
-        assert (
-            "scheduled" in body["agent_response"].lower()
-            or "job id" in body["agent_response"].lower()
-        )
         assert body["draft"]["status"] == "human_review"
-        # Agent should NOT be invoked for scheduling requests
-        mock_agent.invoke.assert_not_called()
+        mock_agent.invoke.assert_called_once()
 
 
 def test_create_job_for_ticket_api_endpoint() -> None:
@@ -254,8 +248,8 @@ def test_create_job_for_ticket_api_endpoint() -> None:
                 "customer_id": "customer-1",
                 "title": "Onsite Electrical Repair",
                 "description": "Inspect main breaker box for ticket-1.",
-                "required_skill": "electrical",
-                "service_area": "New York",
+                "required_skill": "plumber",
+                "service_area": "London",
                 "priority": "high",
             },
         )

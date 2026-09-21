@@ -81,12 +81,23 @@ class LLMClient:
     def generate_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """Request and parse a JSON object from the provider."""
 
-        response = self._request(
-            system_prompt, user_prompt, stream=False, json_mode=True
-        )
+        try:
+            response = self._request(
+                system_prompt, user_prompt, stream=False, json_mode=True
+            )
+        except LLMAPIError:
+            response = self._request(
+                system_prompt, user_prompt, stream=False, json_mode=False
+            )
         try:
             content = response.choices[0].message.content
-            value = json.loads(content)
+            if isinstance(content, str):
+                cleaned = content.strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                value = json.loads(cleaned)
+            else:
+                value = json.loads(content)
         except (AttributeError, IndexError, TypeError, json.JSONDecodeError) as error:
             raise LLMResponseError("LLM returned invalid JSON") from error
         if not isinstance(value, dict):

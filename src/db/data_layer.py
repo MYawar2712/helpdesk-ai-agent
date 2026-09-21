@@ -47,9 +47,16 @@ class HelpdeskDataRepository:
         }
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        """Return one job by ID."""
+        """Return one job by ID, or latest job for customer_id."""
 
-        return self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        job = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        if job is None:
+            job = self._one(
+                "SELECT * FROM jobs WHERE customer_id = ? "
+                "ORDER BY created_at DESC, id DESC",
+                (job_id,),
+            )
+        return job
 
     def get_customer(self, customer_id: str) -> dict[str, Any] | None:
         """Return one customer by ID."""
