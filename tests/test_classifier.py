@@ -28,3 +28,13 @@ def test_ambiguous_text_requests_llm_review(classifier: TicketClassifier) -> Non
 def test_missing_model_is_reported(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="model not found"):
         TicketClassifier(tmp_path / "missing.joblib")
+
+
+def test_classify_intent_service_request() -> None:
+    from models import TicketIntent
+    from tools.classify_intent import classify_intent
+
+    intent = classify_intent(
+        "can u make a plumber to visit my place on thursday at 11 am to check toilet"
+    )
+    assert intent == TicketIntent.NEW_SERVICE_REQUEST

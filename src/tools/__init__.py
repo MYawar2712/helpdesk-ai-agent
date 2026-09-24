@@ -1,5 +1,6 @@
 """Database-backed tools available to the helpdesk LLM."""
 
+from tools.classify_intent import classify_intent
 from tools.get_all_invoices import (
     create_get_all_invoices_tool,
     get_all_invoices,
@@ -12,6 +13,7 @@ from tools.get_open_invoices import (
 )
 
 __all__ = [
+    "classify_intent",
     "create_get_all_invoices_tool",
     "create_get_customer_tool",
     "create_get_job_tool",

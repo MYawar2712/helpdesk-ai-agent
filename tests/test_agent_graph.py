@@ -133,3 +133,21 @@ def test_dispute_keywords_force_handoff() -> None:
     assert result["route"] == "handoff"
     assert "human support" in result["final_response"].lower()
     client.generate_json.assert_not_called()
+
+
+def test_respond_route_handles_null_tool_input() -> None:
+    client = Mock()
+    client.generate_json.return_value = {
+        "route": "respond",
+        "response": "Our office hours are Monday to Friday 9 AM to 5 PM.",
+        "tool_input": None,
+    }
+    agent = HelpdeskAgent(llm_client=client)
+
+    result = agent.invoke("What are your office hours?")
+
+    assert (
+        result["final_response"]
+        == "Our office hours are Monday to Friday 9 AM to 5 PM."
+    )
+    assert result["tool_input"] == {}

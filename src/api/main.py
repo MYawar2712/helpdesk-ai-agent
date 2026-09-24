@@ -16,9 +16,12 @@ SRC_DIRECTORY = Path(__file__).resolve().parents[1]
 if str(SRC_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SRC_DIRECTORY))
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from agent.graph import HelpdeskAgent
 from api.routes import router
@@ -26,10 +29,13 @@ from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
 from db.seed import initialize_database
 from ml.classifier import TicketClassifier
+from tools.cancel_job import create_cancel_job_tool
 from tools.get_all_invoices import create_get_all_invoices_tool
 from tools.get_customer import create_get_customer_tool
 from tools.get_job import create_get_job_tool
 from tools.get_open_invoices import create_get_open_invoices_tool
+from tools.schedule_job import create_schedule_job_tool
+from tools.update_job_status import create_update_job_status_tool
 
 VERSION = "0.1.0"
 
@@ -45,13 +51,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     repo = HelpdeskDataRepository(sql_connection, NoSQLClient(transcript_connection))
     app.state.repository = repo
+    from db.conversation_repository import ConversationRepository
+
+    conv_repo = ConversationRepository(sql_connection)
+    app.state.conv_repository = conv_repo
     app.state.agent = HelpdeskAgent(
+        conversation_repo=conv_repo,
         tools=[
             create_get_job_tool(repo),
             create_get_customer_tool(repo),
             create_get_open_invoices_tool(repo),
             create_get_all_invoices_tool(repo),
-        ]
+            create_schedule_job_tool(),
+            create_cancel_job_tool(repo),
+            create_update_job_status_tool(repo),
+        ],
     )
     yield
     sql_connection.close()
@@ -59,6 +73,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Helpdesk AI Agent", version=VERSION, lifespan=lifespan)
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).resolve().parents[2] / "static")),
+    name="static",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

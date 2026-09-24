@@ -28,10 +28,28 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         ),
         "job_id": "ALTER TABLE tickets ADD COLUMN job_id TEXT",
         "escalation_reason": "ALTER TABLE tickets ADD COLUMN escalation_reason TEXT",
+        "intent": (
+            "ALTER TABLE tickets ADD COLUMN intent TEXT "
+            "NOT NULL DEFAULT 'GENERAL_INQUIRY'"
+        ),
+        "handled_by": (
+            "ALTER TABLE tickets ADD COLUMN handled_by TEXT NOT NULL DEFAULT 'PENDING'"
+        ),
+        "resolution": "ALTER TABLE tickets ADD COLUMN resolution TEXT",
+        "related_job_id": "ALTER TABLE tickets ADD COLUMN related_job_id TEXT",
     }
     for column, statement in migrations.items():
         if column not in ticket_columns:
             connection.execute(statement)
+    # Indexes that depend on the migrated columns must be created only after
+    # the columns exist, so older databases upgraded via the migrations above
+    # do not fail when the schema script runs first.
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tickets_intent ON tickets (intent)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tickets_handled_by ON tickets (handled_by)"
+    )
     customer_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(customers)")
     }
@@ -61,11 +79,59 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         if column not in invoice_columns:
             connection.execute(statement)
 
+    # ── Conversation Memory migration ────────────────────────────────────────
+    # These tables are new; create them on databases that pre-date the schema
+    # update.  The schema.sql already contains the CREATE TABLE IF NOT EXISTS
+    # statements, but for databases that were created before this migration the
+    # executescript() above is a no-op for pre-existing tables, so we guard
+    # each creation here too.
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_threads (
+            thread_id   TEXT PRIMARY KEY,
+            customer_id TEXT NOT NULL,
+            ticket_id   TEXT,
+            subject     TEXT NOT NULL DEFAULT '',
+            status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'closed', 'archived')),
+            created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
+            FOREIGN KEY (ticket_id)   REFERENCES tickets  (id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            message_id      TEXT PRIMARY KEY,
+            thread_id       TEXT NOT NULL,
+            customer_id     TEXT NOT NULL,
+            sender_type     TEXT NOT NULL
+                CHECK (sender_type IN ('customer', 'agent', 'human', 'system')),
+            sender_email    TEXT NOT NULL DEFAULT '',
+            content         TEXT NOT NULL,
+            email_message_id TEXT UNIQUE,
+            created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (thread_id)   REFERENCES conversation_threads (thread_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (customer_id) REFERENCES customers (id)
+                ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conv_threads_customer_id
+            ON conversation_threads (customer_id);
+        CREATE INDEX IF NOT EXISTS idx_conv_messages_thread_id
+            ON conversation_messages (thread_id);
+        CREATE INDEX IF NOT EXISTS idx_conv_messages_created_at
+            ON conversation_messages (thread_id, created_at);
+        """
+    )
+
 
 def seed_database(connection: sqlite3.Connection) -> None:
     """Replace existing rows with deterministic relational sample data."""
 
     initialize_database(connection)
+    connection.execute("DELETE FROM conversation_messages")
+    connection.execute("DELETE FROM conversation_threads")
     connection.execute("DELETE FROM sent_emails")
     connection.execute("DELETE FROM email_drafts")
     connection.execute("DELETE FROM invoices")

@@ -76,6 +76,8 @@ def test_email_draft_requires_human_approval_before_send() -> None:
         customer_id="customer-1",
         ai_draft="We can send an HVAC technician tomorrow.",
     )
+    ticket = service._one("SELECT * FROM tickets WHERE id = ?", ("ticket-1",))
+    assert ticket["status"] == "in_progress"
 
     with pytest.raises(BusinessRuleError):
         service.send_approved_email(draft_id=draft["id"], sender="support-1")
@@ -85,6 +87,8 @@ def test_email_draft_requires_human_approval_before_send() -> None:
         reviewer="support-1",
         edited_body="We can send an HVAC technician tomorrow morning.",
     )
+    ticket = service._one("SELECT * FROM tickets WHERE id = ?", ("ticket-1",))
+    assert ticket["status"] == "resolved"
     sent = service.send_approved_email(draft_id=approved["id"], sender="support-1")
 
     assert sent["status"] == "sent"
@@ -145,7 +149,6 @@ def test_infer_required_skill_matches_keywords() -> None:
         infer_required_skill("Please fix the leaking toilet in bathroom") == "plumber"
     )
     assert infer_required_skill("Main circuit breaker keeps tripping") == "electrical"
-    assert infer_required_skill("Can you inspect my equipment?") == "technician"
     assert infer_required_skill("Hello, what are your opening hours?") is None
 
 

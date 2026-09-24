@@ -9,7 +9,14 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from models import HandledBy, TicketIntent, TicketStatus
 from utils.date_parser import parse_natural_datetime
+
+_ALLOWED_JOB_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"cancelled", "scheduled", "locked"},
+    "scheduled": {"cancelled", "in_progress", "locked"},
+    "in_progress": {"completed", "cancelled"},
+}
 
 
 class AuthorizationError(PermissionError):
@@ -55,7 +62,15 @@ def infer_required_skill(message: str) -> str | None:
 
     if any(
         k in lowered
-        for k in ("ac", "air condition", "heating", "hvac", "cooling", "ventilation")
+        for k in (
+            "ac",
+            "air condition",
+            "heating",
+            "hvac",
+            "cooling",
+            "ventilation",
+            "boiler",
+        )
     ):
         return "HVAC"
     if any(
@@ -70,23 +85,38 @@ def infer_required_skill(message: str) -> str | None:
         return "electrical"
     if any(k in lowered for k in ("sanitary", "hygiene", "bathroom fixture")):
         return "sanitary"
-    if any(
-        k in lowered
-        for k in (
-            "repair",
-            "fix",
-            "job",
-            "service",
-            "broken",
-            "maintenance",
-            "install",
-            "job lock",
-            "inspect",
-            "equipment",
-        )
+
+    physical_markers = (
+        "engineer",
+        "technician",
+        "plumber",
+        "electrician",
+        "hvac",
+        "boiler",
+        "heater",
+        "appliance",
+        "unit",
+        "machine",
+        "pipe",
+        "toilet",
+        "sink",
+        "ac",
+        "air condition",
+    )
+    if any(k in lowered for k in ("broken", "install", "installation")) and any(
+        p in lowered for p in physical_markers
     ):
         return "technician"
+    if any(k in lowered for k in ("repair", "fix", "maintenance", "job lock")):
+        return "technician"
     return None
+
+
+def _is_agent_only_intent(text: str) -> bool:
+    """Return True when the message should not create a new Job."""
+    from tools.classify_intent import classify_intent
+
+    return classify_intent(text).is_agent_only
 
 
 class HelpdeskOperationsService:
@@ -142,6 +172,9 @@ class HelpdeskOperationsService:
         description: str,
         category: str | None = None,
         priority: str | None = None,
+        intent: str | None = None,
+        handled_by: str = HandledBy.PENDING.value,
+        resolution: str | None = None,
     ) -> dict[str, Any]:
         """Create a new ticket record in the database for an authenticated customer
         using ML classifier."""
@@ -149,6 +182,13 @@ class HelpdeskOperationsService:
         ticket_id = f"ticket-{uuid4().hex}"
 
         text = f"{title}. {description}"
+        if intent:
+            persisted_intent = TicketIntent(intent).value
+        else:
+            from tools.classify_intent import classify_intent
+
+            persisted_intent = classify_intent(text).value
+        persisted_handled_by = HandledBy(handled_by).value
         confidence = 1.0
         final_category = category or "general_inquiry"
         final_priority = priority or "medium"
@@ -200,8 +240,9 @@ class HelpdeskOperationsService:
         self.connection.execute(
             """INSERT INTO tickets
             (id, customer_id, title, description, category, priority, confidence,
-             needs_escalation, escalation_reason, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             needs_escalation, escalation_reason, status, intent, handled_by,
+             resolution)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ticket_id,
                 identity.customer_id,
@@ -213,6 +254,9 @@ class HelpdeskOperationsService:
                 needs_escalation,
                 escalation_reason,
                 status,
+                persisted_intent,
+                persisted_handled_by,
+                resolution,
             ),
         )
 
@@ -240,7 +284,12 @@ class HelpdeskOperationsService:
             "ticket",
             ticket_id,
             identity.customer_id,
-            {"title": title, "category": final_category, "confidence": confidence},
+            {
+                "title": title,
+                "category": final_category,
+                "confidence": confidence,
+                "intent": persisted_intent,
+            },
         )
         self.connection.commit()
         return dict(self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
@@ -311,6 +360,11 @@ class HelpdeskOperationsService:
         if job_id:
             if job_id.isdigit():
                 job_id = f"job-{job_id}"
+            existing = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+            if existing is not None and existing["customer_id"] != customer_id:
+                raise AuthorizationError(
+                    f"job {job_id} does not belong to customer {customer_id}"
+                )
             jobs = self.connection.execute(
                 """SELECT * FROM jobs
                 WHERE id = ? AND customer_id = ?
@@ -424,7 +478,8 @@ class HelpdeskOperationsService:
         )
 
         self.connection.execute(
-            "UPDATE tickets SET job_id = ? WHERE id = ?", (job_id, ticket_id)
+            "UPDATE tickets SET job_id = ?, related_job_id = ? WHERE id = ?",
+            (job_id, job_id, ticket_id),
         )
 
         engineer = self.find_best_engineer(
@@ -568,6 +623,13 @@ class HelpdeskOperationsService:
     ) -> dict[str, Any]:
         """Store an AI email draft in human review; this method never sends email."""
         ticket = self._owned_row("tickets", ticket_id, customer_id)
+        # A ticket with an outstanding draft is still being worked.  In
+        # particular, do not leave it resolved while a human response is
+        # awaiting approval.
+        self.connection.execute(
+            "UPDATE tickets SET status = 'in_progress' WHERE id = ?",
+            (ticket["id"],),
+        )
         draft_id = f"draft-{uuid4().hex}"
         self.connection.execute(
             """INSERT INTO email_drafts
@@ -601,6 +663,12 @@ class HelpdeskOperationsService:
                 reviewed_at = CURRENT_TIMESTAMP
             WHERE id = ?""",
             (edited_body, reviewer, draft_id),
+        )
+        # Approval is the point at which the pending response has cleared
+        # human review.  Resolve the associated ticket only now.
+        self.connection.execute(
+            "UPDATE tickets SET status = 'resolved' WHERE id = ?",
+            (draft["ticket_id"],),
         )
         self._audit(
             "human",
@@ -647,18 +715,14 @@ class HelpdeskOperationsService:
             raise BusinessRuleError("email draft must be approved before sending")
 
         ticket = self._one("SELECT * FROM tickets WHERE id = ?", (draft["ticket_id"],))
-        if (
-            ticket is not None
-            and not ticket["job_id"]
-            and not ticket["needs_escalation"]
-            and ticket["category"] != "billing"
-        ):
+        created_job_id: str | None = None
+        if self._should_create_job_for_ticket(ticket):
             inferred_skill = infer_required_skill(ticket["description"])
             if inferred_skill is not None:
                 parsed_dt = parse_natural_datetime(ticket["description"])
                 scheduled_at_iso = parsed_dt.isoformat() if parsed_dt else None
                 try:
-                    self.create_job_for_ticket(
+                    created_job = self.create_job_for_ticket(
                         CustomerIdentity(customer_id=draft["customer_id"]),
                         ticket_id=draft["ticket_id"],
                         title=f"{inferred_skill} Service Visit",
@@ -667,10 +731,45 @@ class HelpdeskOperationsService:
                         service_area="London",
                         scheduled_at=scheduled_at_iso,
                     )
+                    created_job_id = created_job.get("id")
                 except Exception:
                     pass
 
+        # Read the relationship back from the ticket as the source of truth.
+        # This also covers jobs created earlier in the workflow or a retry where
+        # the ticket was already linked to a job.
+        if not created_job_id and ticket is not None:
+            refreshed_ticket = self._one(
+                "SELECT job_id, related_job_id FROM tickets WHERE id = ?",
+                (draft["ticket_id"],),
+            )
+            if refreshed_ticket is not None:
+                created_job_id = (
+                    refreshed_ticket["job_id"] or refreshed_ticket["related_job_id"]
+                )
+
         final_message = draft["human_edited_version"] or draft["original_ai_draft"]
+        if created_job_id:
+            failure_phrases = (
+                "unable to create",
+                "could not parse",
+                "unable to set up",
+                "failed to create",
+            )
+            if any(phrase in final_message.lower() for phrase in failure_phrases):
+                schedule_text = (
+                    ticket["description"] if ticket else "your requested time"
+                )
+                final_message = (
+                    f"Your AC repair job has been created for the requested schedule: "
+                    f"{schedule_text}. Your job ID is {created_job_id}. "
+                    "Please keep this ID for future reference."
+                )
+            elif created_job_id not in final_message:
+                final_message = (
+                    f"{final_message}\n\nYour job ID is {created_job_id}. "
+                    "Please keep it for future reference."
+                )
         sent_id = f"sent-{uuid4().hex}"
 
         self.connection.execute(
@@ -703,6 +802,135 @@ class HelpdeskOperationsService:
         sent_row["status"] = "sent"
         sent_row["final_sent_message"] = final_message
         return sent_row
+
+    def resolve_ticket_as_agent(
+        self, ticket_id: str, resolution: str
+    ) -> dict[str, Any]:
+        """Mark a ticket as resolved by the AI agent with no new Job."""
+        ticket = self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,))
+        if ticket is None:
+            raise LookupError(f"ticket does not exist: {ticket_id}")
+        self.connection.execute(
+            """UPDATE tickets
+            SET status = ?, handled_by = ?, resolution = ?, related_job_id = NULL
+            WHERE id = ?""",
+            (
+                TicketStatus.RESOLVED.value,
+                HandledBy.AI_AGENT.value,
+                resolution,
+                ticket_id,
+            ),
+        )
+        self._audit(
+            "agent",
+            None,
+            "ticket_resolved_by_agent",
+            "ticket",
+            ticket_id,
+            ticket["customer_id"],
+            {"resolution": resolution},
+        )
+        self.connection.commit()
+        return dict(self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
+
+    def link_ticket_to_job(self, ticket_id: str, job_id: str) -> dict[str, Any]:
+        """Associate an existing ticket with an existing job."""
+        ticket = self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,))
+        if ticket is None:
+            raise LookupError(f"ticket does not exist: {ticket_id}")
+        job = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        if job is None:
+            raise LookupError(f"job does not exist: {job_id}")
+        if job["customer_id"] != ticket["customer_id"]:
+            raise AuthorizationError(
+                "job does not belong to the same customer as the ticket"
+            )
+        self.connection.execute(
+            "UPDATE tickets SET related_job_id = ? WHERE id = ?",
+            (job_id, ticket_id),
+        )
+        self._audit(
+            "system",
+            None,
+            "ticket_linked_to_job",
+            "ticket",
+            ticket_id,
+            ticket["customer_id"],
+            {"job_id": job_id},
+        )
+        self.connection.commit()
+        return dict(self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
+
+    def cancel_job_for_ticket(
+        self,
+        customer_id: str,
+        ticket_id: str,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Cancel owned jobs for a ticket and resolve the ticket as the agent."""
+        self._owned_row("tickets", ticket_id, customer_id)
+        cancelled = self.cancel_customer_scheduled_jobs(customer_id, job_id=job_id)
+        if cancelled:
+            cancelled_ids = ", ".join(job["id"] for job in cancelled)
+            resolution = f"Cancelled job(s): {cancelled_ids}"
+        else:
+            resolution = "No active scheduled or pending jobs to cancel"
+        ticket = self.resolve_ticket_as_agent(ticket_id, resolution)
+        if cancelled:
+            ticket = self.link_ticket_to_job(ticket_id, cancelled[0]["id"])
+        return {"ticket": ticket, "cancelled_jobs": cancelled}
+
+    def update_customer_job_status(
+        self,
+        identity: CustomerIdentity,
+        job_id: str,
+        new_status: str,
+    ) -> dict[str, Any]:
+        """Update a customer-owned job after validating the status transition."""
+        if job_id.isdigit():
+            job_id = f"job-{job_id}"
+        job = dict(self._owned_row("jobs", job_id, identity.customer_id))
+        current_status = job["status"]
+        allowed = _ALLOWED_JOB_STATUS_TRANSITIONS.get(current_status, set())
+        if new_status not in allowed:
+            raise BusinessRuleError(
+                f"Cannot transition job '{job_id}' from status '{current_status}' "
+                f"to '{new_status}'. Allowed transitions: {sorted(allowed)}"
+            )
+        self.connection.execute(
+            "UPDATE jobs SET status = ? WHERE id = ? AND customer_id = ?",
+            (new_status, job_id, identity.customer_id),
+        )
+        self._audit(
+            "customer",
+            identity.customer_id,
+            "job_status_updated",
+            "job",
+            job_id,
+            identity.customer_id,
+            {"previous_status": current_status, "new_status": new_status},
+        )
+        self.connection.commit()
+        updated = dict(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,)))
+        return {"found": True, "job": updated, "previous_status": current_status}
+
+    def _should_create_job_for_ticket(self, ticket: sqlite3.Row | None) -> bool:
+        if ticket is None:
+            return False
+        if ticket["job_id"] or ticket["needs_escalation"]:
+            return False
+        if ticket["category"] == "billing":
+            return False
+        intent_value = ticket["intent"] if "intent" in ticket.keys() else None
+        if intent_value:
+            try:
+                if TicketIntent(intent_value).is_agent_only:
+                    return False
+            except ValueError:
+                pass
+        if _is_agent_only_intent(ticket["description"]):
+            return False
+        return True
 
     def _require_verified_customer(self, customer_id: str) -> None:
         customer = self._one(

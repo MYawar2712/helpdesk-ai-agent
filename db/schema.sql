@@ -99,16 +99,36 @@ CREATE TABLE IF NOT EXISTS tickets (
             'in_progress',
             'waiting_for_customer',
             'waiting_for_engineer',
+            'waiting_for_human',
+            'human_escalation',
             'resolved',
             'escalated',
             'closed',
             'processed'
         )
     ),
+    intent TEXT NOT NULL DEFAULT 'GENERAL_INQUIRY'
+        CHECK (intent IN (
+            'GENERAL_INQUIRY',
+            'BILLING_INQUIRY',
+            'JOB_STATUS',
+            'CANCEL_JOB',
+            'RESCHEDULE_JOB',
+            'MODIFY_JOB',
+            'NEW_SERVICE_REQUEST',
+            'COMPLAINT',
+            'TECHNICAL_SUPPORT',
+            'HUMAN_ESCALATION'
+        )),
+    handled_by TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (handled_by IN ('PENDING', 'AI_AGENT', 'HUMAN', 'SYSTEM')),
+    resolution TEXT,
+    related_job_id TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
     FOREIGN KEY (assigned_engineer_id) REFERENCES engineers (id) ON DELETE SET NULL,
-    FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE SET NULL
+    FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE SET NULL,
+    FOREIGN KEY (related_job_id) REFERENCES jobs (id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS ticket_messages (
@@ -193,3 +213,41 @@ CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_id ON ticket_messages (tic
 CREATE INDEX IF NOT EXISTS idx_email_drafts_status ON email_drafts (status);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_ticket_id ON sent_emails (ticket_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_resource ON audit_log (resource_type, resource_id);
+
+-- ── Conversation Memory ──────────────────────────────────────────────────────
+-- Each email exchange from a customer lives in exactly one thread.
+-- thread_id typically mirrors the email provider's thread identifier so that
+-- a customer reply is linked to the existing thread without creating a new one.
+CREATE TABLE IF NOT EXISTS conversation_threads (
+    thread_id   TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    ticket_id   TEXT,
+    subject     TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'closed', 'archived')),
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
+    FOREIGN KEY (ticket_id)   REFERENCES tickets  (id) ON DELETE SET NULL
+);
+
+-- Individual messages inside a conversation thread.
+-- email_message_id is the provider-level message identifier used for
+-- idempotency: the UNIQUE constraint prevents duplicate ingestion.
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    message_id      TEXT PRIMARY KEY,
+    thread_id       TEXT NOT NULL,
+    customer_id     TEXT NOT NULL,
+    sender_type     TEXT NOT NULL
+        CHECK (sender_type IN ('customer', 'agent', 'human', 'system')),
+    sender_email    TEXT NOT NULL DEFAULT '',
+    content         TEXT NOT NULL,
+    email_message_id TEXT UNIQUE,
+    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (thread_id)   REFERENCES conversation_threads (thread_id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers            (id)         ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_threads_customer_id ON conversation_threads (customer_id);
+CREATE INDEX IF NOT EXISTS idx_conv_messages_thread_id  ON conversation_messages (thread_id);
+CREATE INDEX IF NOT EXISTS idx_conv_messages_created_at ON conversation_messages (thread_id, created_at);

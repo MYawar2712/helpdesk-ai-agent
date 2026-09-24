@@ -106,6 +106,7 @@ class CustomerInquiryDraftRequest(BaseModel):
     message: str = Field(min_length=1)
     ticket_id: str | None = None
     title: str | None = None
+    email_thread_id: str | None = None
 
 
 class CustomerInquiryDraftResponse(BaseModel):
@@ -116,6 +117,7 @@ class CustomerInquiryDraftResponse(BaseModel):
     route: str | None = None
     tool_name: str | None = None
     sources: list[str] = Field(default_factory=list)
+    intent: str | None = None
 
 
 class EmailDraftApprovalRequest(BaseModel):
@@ -136,3 +138,27 @@ class EmailDraftSendRequest(BaseModel):
     """Human-triggered send request for an approved email draft."""
 
     sender: str = Field(min_length=1)
+
+
+class TicketListResponse(BaseModel):
+    """List of support tickets."""
+
+    tickets: list[dict[str, Any]]
+
+
+class JobListResponse(BaseModel):
+    """List of customer jobs."""
+
+    jobs: list[dict[str, Any]]
+
+
+class CustomerListResponse(BaseModel):
+    """List of customers."""
+
+    customers: list[dict[str, Any]]
+
+
+class EmailDraftListResponse(BaseModel):
+    """List of email drafts."""
+
+    drafts: list[dict[str, Any]]

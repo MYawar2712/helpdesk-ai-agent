@@ -62,15 +62,21 @@ def parse_natural_datetime(text: str) -> datetime | None:
 
     now = datetime.now()
 
-    # Check for day name patterns
+    day_words = (
+        r"(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)"
+    )
+    time_pat = r"(\d{1,2}(?::\d{2})?\s*[ap]m|\d{1,2}\s*o'clock|\d{1,2}(?::\d{2})?)"
+
+    # Check for day name patterns (e.g., "on wednesday at 10am", "wednesday 10am")
     day_match = re.search(
-        r"(next\s+)?(\w+)\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*[ap]m|\d{1,2}\s*o'clock|\d{1,2}(?::\d{2})?)",
+        rf"(?:on\s+)?(?:(next)\s+)?({day_words})\s+(?:at\s+|on\s+)?{time_pat}",
         text,
     )
     if not day_match:
-        # Try reversed order: time then day
+        # Try reversed order, such as "10 am on wednesday".
         day_match = re.search(
-            r"(\d{1,2}(?::\d{2})?\s*[ap]m|\d{1,2}\s*o'clock|\d{1,2}(?::\d{2})?)\s+(?:on\s+)?(next\s+)?(\w+)",
+            rf"{time_pat}\s+(?:on\s+|at\s+|for\s+)?(?:(next)\s+)?({day_words})",
             text,
         )
         if day_match:

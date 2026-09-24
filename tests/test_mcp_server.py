@@ -123,7 +123,7 @@ def test_mcp_server_tool_listing() -> None:
     assert hasattr(server_module, "list_tools") or hasattr(server_module, "run_server")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mcp_server_tool_call_valid_job() -> None:
     """The MCP server handles valid get_job calls."""
     from mcp_server.server import call_tool
@@ -148,7 +148,7 @@ async def test_mcp_server_tool_call_valid_job() -> None:
             server_module._repository = original_repo
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mcp_server_tool_call_invalid_job() -> None:
     """The MCP server handles invalid job IDs."""
     from mcp_server.server import call_tool
@@ -171,7 +171,7 @@ async def test_mcp_server_tool_call_invalid_job() -> None:
             server_module._repository = original_repo
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mcp_server_tool_call_empty_job_id() -> None:
     """The MCP server rejects empty job IDs."""
     from mcp_server.server import call_tool
@@ -194,7 +194,7 @@ async def test_mcp_server_tool_call_empty_job_id() -> None:
             server_module._repository = original_repo
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mcp_server_authorization_check() -> None:
     """The MCP server enforces customer authorization."""
     from mcp_server.server import call_tool
@@ -229,7 +229,7 @@ async def test_mcp_server_authorization_check() -> None:
             server_module._repository = original_repo
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mcp_server_unknown_tool() -> None:
     """The MCP server handles unknown tool names."""
     from mcp_server.server import call_tool

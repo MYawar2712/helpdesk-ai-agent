@@ -110,6 +110,19 @@ class TestParseNaturalDatetime:
         result = parse_natural_datetime("Monday at 9am")
         assert result is None or result > datetime.now()
 
+    def test_preposition_and_natural_phrasing(self) -> None:
+        res1 = parse_natural_datetime(
+            "can u make a job lock for my ac repairing on 10 am on wednesday"
+        )
+        assert isinstance(res1, datetime)
+        assert res1.hour == 10
+        assert res1.minute == 0
+
+        res2 = parse_natural_datetime("on wednesday at 10:00 am")
+        assert isinstance(res2, datetime)
+        assert res2.hour == 10
+        assert res2.minute == 0
+
 
 class TestValidateScheduledAt:
     def test_valid_iso_format(self, svc, verified_customer) -> None:

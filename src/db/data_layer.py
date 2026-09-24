@@ -103,6 +103,84 @@ class HelpdeskDataRepository:
             "transcripts": transcripts,
         }
 
+    def list_tickets(
+        self,
+        *,
+        status: str | None = None,
+        intent: str | None = None,
+        handled_by: str | None = None,
+        customer_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return tickets ordered by creation time, with optional filters."""
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if intent:
+            conditions.append("intent = ?")
+            params.append(intent)
+        if handled_by:
+            conditions.append("handled_by = ?")
+            params.append(handled_by)
+        if customer_id:
+            conditions.append("customer_id = ?")
+            params.append(customer_id)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        query = (
+            f"SELECT * FROM tickets{where} ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        params.append(limit)
+        return self._many(query, tuple(params))
+
+    def list_jobs(
+        self,
+        *,
+        status: str | None = None,
+        customer_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return jobs ordered by creation time, with optional filters."""
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if customer_id:
+            conditions.append("customer_id = ?")
+            params.append(customer_id)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        query = f"SELECT * FROM jobs{where} ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        return self._many(query, tuple(params))
+
+    def list_customers(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return customers ordered by creation time."""
+
+        return self._many(
+            "SELECT * FROM customers ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        )
+
+    def list_email_drafts(
+        self, *, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return email drafts ordered by creation time, with optional status filter."""
+
+        if status:
+            return self._many(
+                "SELECT * FROM email_drafts WHERE status = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (status, limit),
+            )
+        return self._many(
+            "SELECT * FROM email_drafts ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        )
+
     def save_ticket_classification(
         self, ticket_id: str, classification: TicketClassification
     ) -> None:

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Helpdesk Support Desk</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="logo">●</span>
+        <span>Helpdesk</span>
+      </div>
+      <nav class="nav">
+        <a href="#dashboard" class="nav-link active" data-view="dashboard">Dashboard</a>
+        <a href="#tickets" class="nav-link" data-view="tickets">Tickets</a>
+        <a href="#jobs" class="nav-link" data-view="jobs">Jobs</a>
+        <a href="#customers" class="nav-link" data-view="customers">Customers</a>
+        <a href="#drafts" class="nav-link" data-view="drafts">Drafts</a>
+        <a href="#simulator" class="nav-link" data-view="simulator">⚡ Test Simulator</a>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="page-title">Dashboard</h1>
+        <div class="actions" id="top-actions"></div>
+      </header>
+
+      <section id="view-dashboard" class="view active">
+        <div class="cards" id="dashboard-cards"></div>
+        <div class="section-header">
+          <h2>Drafts awaiting approval</h2>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table" id="dashboard-drafts-table">
+            <thead><tr><th>ID</th><th>Customer</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-tickets" class="view">
+        <div class="filters">
+          <input type="text" id="ticket-filter" placeholder="Filter tickets..." />
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table" id="tickets-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Intent</th>
+                <th>Priority</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-jobs" class="view">
+        <div class="filters">
+          <input type="text" id="job-filter" placeholder="Filter jobs..." />
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table" id="jobs-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Skill</th>
+                <th>Scheduled</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-customers" class="view">
+        <div class="table-wrapper">
+          <table class="data-table" id="customers-table">
+            <thead>
+              <tr><th>ID</th><th>Name</th><th>Email</th><th>Phone</th><th>Company</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-drafts" class="view">
+        <div class="table-wrapper">
+          <table class="data-table" id="drafts-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Ticket</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-simulator" class="view">
+        <div class="simulator-layout">
+          <!-- Left Panel: Customer Portal Simulator -->
+          <div class="sim-panel customer-panel">
+            <div class="panel-header">
+              <h3>📱 Customer Portal</h3>
+              <div class="customer-selector-wrapper">
+                <label for="sim-customer-select">Select Customer:</label>
+                <select id="sim-customer-select" class="sim-select">
+                  <option value="">Loading customers...</option>
+                </select>
+                <button id="sim-new-conversation-btn" class="btn btn-secondary btn-sm">New conversation</button>
+              </div>
+            </div>
+
+            <div class="customer-info-bar" id="sim-customer-info">
+              Select a customer above to start multi-turn conversation testing.
+            </div>
+
+            <div class="chat-history-wrapper" id="sim-customer-chat">
+              <div class="chat-placeholder">
+                No active thread selected. Choose a customer and type a message below.
+              </div>
+            </div>
+
+            <div class="sim-composer">
+              <textarea id="sim-msg-input" placeholder="Type a message as the customer..."></textarea>
+              <button id="sim-send-btn" class="btn btn-primary">Send to Support Desk</button>
+            </div>
+          </div>
+
+          <div class="sim-panel support-panel" id="sim-support-panel">
+            <div class="panel-header">
+              <h3>🛡️ Support Desk Review Queue</h3>
+              <button id="sim-refresh-btn" class="btn btn-secondary btn-sm">🔄 Refresh</button>
+            </div>
+
+            <div class="draft-review-box" id="sim-draft-box">
+              <div class="empty-state">
+                No active draft generated yet. Send a message from the Customer Portal to trigger an AI response draft!
+              </div>
+            </div>
+
+            <div class="thread-history-box">
+              <h4>Thread Messages & History</h4>
+              <div id="sim-thread-messages" class="thread-messages-list">
+                <div class="chat-placeholder">Thread history will appear here.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Detail</h3>
+        <button class="close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

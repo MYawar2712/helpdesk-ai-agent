@@ -121,6 +121,90 @@ async def health(request: Request) -> HealthCheckResponse:
     )
 
 
+@router.get("/api/v1/tickets")
+async def list_tickets(request: Request) -> dict[str, Any]:
+    """Return tickets for the support-desk dashboard."""
+    repository = getattr(request.app.state, "repository", None)
+    if repository is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
+    return {"tickets": repository.list_tickets()}
+
+
+@router.get("/api/v1/jobs")
+async def list_jobs(request: Request) -> dict[str, Any]:
+    """Return jobs for the support-desk dashboard."""
+    repository = getattr(request.app.state, "repository", None)
+    if repository is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
+    return {"jobs": repository.list_jobs()}
+
+
+@router.get("/api/v1/customers")
+async def list_customers(request: Request) -> dict[str, Any]:
+    """Return customers for the dashboard and test simulator."""
+    repository = getattr(request.app.state, "repository", None)
+    if repository is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
+    return {"customers": repository.list_customers()}
+
+
+@router.get("/api/v1/support/email-drafts")
+async def list_email_drafts(
+    request: Request, status: str | None = None
+) -> dict[str, Any]:
+    """Return email drafts, optionally filtered by review status."""
+    repository = getattr(request.app.state, "repository", None)
+    if repository is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
+    return {"drafts": repository.list_email_drafts(status=status)}
+
+
+@router.get("/api/v1/simulator/conversations")
+async def simulator_conversations(customer_id: str, request: Request) -> dict[str, Any]:
+    """Return stored simulator conversations for a customer."""
+    conv_repo = getattr(request.app.state, "conv_repository", None)
+    if conv_repo is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Conversation repository not ready"
+        )
+    threads = conv_repo.list_threads(customer_id=customer_id)
+    return {
+        "conversations": [
+            {
+                "thread_id": thread.thread_id,
+                "ticket_id": thread.ticket_id,
+                "subject": thread.subject,
+                "updated_at": thread.updated_at,
+                "messages": [
+                    {
+                        "sender_type": message.sender_type,
+                        "content": message.content,
+                        "created_at": message.created_at,
+                    }
+                    for message in conv_repo.get_messages(
+                        thread.thread_id, customer_id=customer_id
+                    )
+                ],
+            }
+            for thread in threads
+        ]
+    }
+
+
+@router.get("/api/v1/support/sent-emails")
+async def list_sent_emails(customer_id: str, request: Request) -> dict[str, Any]:
+    """Return sent customer replies for simulator synchronization."""
+    repository = getattr(request.app.state, "repository", None)
+    if repository is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
+    rows = repository.sql_connection.execute(
+        "SELECT id, ticket_id, customer_id, body, created_at FROM sent_emails "
+        "WHERE customer_id = ? ORDER BY created_at DESC LIMIT 100",
+        (customer_id,),
+    ).fetchall()
+    return {"sent_emails": [dict(row) for row in rows]}
+
+
 @router.post("/api/v1/tickets/classify", response_model=TicketClassificationResponse)
 async def classify_ticket(
     payload: TicketIntakeRequest, request: Request
@@ -308,8 +392,12 @@ async def draft_customer_inquiry_reply(
             re.IGNORECASE,
         )
         target_job_id = target_job_match.group(1).strip() if target_job_match else None
-        cancelled_jobs = _operations(request).cancel_customer_scheduled_jobs(
-            payload.customer_id, job_id=target_job_id
+        cancelled_jobs = (
+            _operations(request).cancel_customer_scheduled_jobs(
+                payload.customer_id, job_id=target_job_id
+            )
+            if target_job_id
+            else []
         )
         if cancelled_jobs:
             job_ids_str = ", ".join(j["id"] for j in cancelled_jobs)
@@ -329,9 +417,9 @@ async def draft_customer_inquiry_reply(
                 )
             else:
                 job_context_str = (
-                    f"Action taken: Customer requested cancellation. "
-                    f"Confirmed cancellation request for customer "
-                    f"{payload.customer_id}."
+                    "No cancellation action has been taken. The customer asked to "
+                    "cancel a job but did not provide a job ID. Ask which job ID "
+                    "they want to cancel and show their active job IDs if available."
                 )
 
     result: dict[str, Any] = {
@@ -349,7 +437,15 @@ async def draft_customer_inquiry_reply(
     prompt = "\n".join(context_parts)
 
     try:
-        result = await asyncio.to_thread(agent.invoke, prompt)
+        thread_key = payload.email_thread_id or (
+            f"thread-{ticket_id}" if ticket_id else None
+        )
+        result = await asyncio.to_thread(
+            agent.invoke,
+            prompt,
+            customer_id=payload.customer_id,
+            email_thread_id=thread_key,
+        )
         response_text = result.get("final_response") or result.get("response") or ""
         if not response_text.strip():
             raise BusinessRuleError("agent did not produce a draft response")
