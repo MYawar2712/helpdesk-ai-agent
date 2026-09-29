@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from api.dependencies import CurrentUser
 from api.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from auth.rbac import Role
 from core.config import Settings, get_settings
 from core.security import create_access_token, hash_password, verify_password
 from db.models import Tenant, User
@@ -71,11 +72,20 @@ def register(
     # 2. Hash the password before touching the database.
     password_hash = hash_password(payload.password)
 
-    # 3. Persist the new user.
+    # 3. Enforce default non-privileged role for self-registration
+    requested_role = payload.role.upper()
+    if requested_role in (Role.PLATFORM_ADMIN.value, Role.TENANT_ADMIN.value):
+        assigned_role = (
+            Role.CUSTOMER.value if payload.tenant_id else Role.SUPPORT_AGENT.value
+        )
+    else:
+        assigned_role = requested_role
+
+    # 4. Persist the new user.
     user = User(
         email=payload.email,
         password_hash=password_hash,
-        role=payload.role,
+        role=assigned_role,
         tenant_id=payload.tenant_id,
         is_active=True,
     )

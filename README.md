@@ -21,6 +21,37 @@ ruff check .
 pre-commit run --all-files
 ```
 
+---
+
+## Authentication & Authorization Architecture (Day 2 & Day 3)
+
+The Helpdesk AI Agent features multi-tenant data isolation, JWT-based authentication, fine-grained Role-Based Access Control (RBAC), and protection against privilege escalation.
+
+### RBAC Roles & Permissions
+
+- **`PLATFORM_ADMIN`**: Full platform management across all tenants (user CRUD, tenant updates, audit logs).
+- **`TENANT_ADMIN`**: Full management within a single tenant boundary. Prevents privilege escalation to `PLATFORM_ADMIN`.
+- **`SUPPORT_AGENT`**: Operational support capabilities (ticket triage, job creation/assignment, customer overview).
+- **`AI_AGENT`**: Dedicated non-human system role with strict permission boundaries.
+- **`CUSTOMER`**: Restricted self-service role. Access limited strictly to owned tickets, jobs, and invoices.
+
+### User Management Endpoints
+
+All user management endpoints strictly derive `tenant_id` from the authenticated administrator and enforce tenant isolation:
+
+- `GET /users` – List users in current tenant (or across tenants for `PLATFORM_ADMIN`).
+- `GET /users/{id}` – Get user details by ID.
+- `POST /users` – Create a new user (admin-only, prevents privilege escalation).
+- `PATCH /users/{id}` – Update user details or role.
+- `DELETE /users/{id}` – Delete user account.
+
+### AI Agent Permission Foundation
+
+Subagents and automated tool execution are governed by an explicit agent-to-permission matrix (`src/auth/rbac.py`):
+- `JOB_AGENT`: Allowed `job:read`, `job:create`, `job:assign`. Prohibited from `user:delete`, `tenant:update`, `invoice:update`.
+- `TICKET_AGENT`: Allowed `ticket:read`, `ticket:create`, `ticket:update`.
+- `INQUIRY_AGENT`: Allowed `customer:read`, `invoice:read`.
+
 The package source lives in `src/`, tests in `tests/`, documentation in `docs/`, reusable prompts in `prompts/`, and evaluation material in `eval/`.
 
 ---

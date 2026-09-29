@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from agent.graph import HelpdeskAgent
@@ -28,6 +28,11 @@ from api.schemas import (
     TicketIntakeRequest,
     TicketJobCreateRequest,
 )
+from auth.dependencies import (
+    require_permission,
+)
+from auth.rbac import Permission
+from db.models import User
 from rules.escalation_engine import EscalationEngine
 from services.operations import (
     AuthorizationError,
@@ -38,6 +43,10 @@ from services.operations import (
 from workers.tasks import process_ticket_async
 
 router = APIRouter()
+
+_RequireTicketRead = Depends(require_permission(Permission.TICKET_READ.value))
+_RequireJobRead = Depends(require_permission(Permission.JOB_READ.value))
+_RequireCustomerRead = Depends(require_permission(Permission.CUSTOMER_READ.value))
 
 
 def _extract_sources(result: dict[str, Any]) -> list[str]:
@@ -131,7 +140,10 @@ async def health(request: Request) -> HealthCheckResponse:
 
 
 @router.get("/api/v1/tickets")
-async def list_tickets(request: Request) -> dict[str, Any]:
+async def list_tickets(
+    request: Request,
+    current_user: User = _RequireTicketRead,
+) -> dict[str, Any]:
     """Return tickets for the support-desk dashboard."""
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
@@ -140,7 +152,10 @@ async def list_tickets(request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/v1/jobs")
-async def list_jobs(request: Request) -> dict[str, Any]:
+async def list_jobs(
+    request: Request,
+    current_user: User = _RequireJobRead,
+) -> dict[str, Any]:
     """Return jobs for the support-desk dashboard."""
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
@@ -149,7 +164,10 @@ async def list_jobs(request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/v1/customers")
-async def list_customers(request: Request) -> dict[str, Any]:
+async def list_customers(
+    request: Request,
+    current_user: User = _RequireCustomerRead,
+) -> dict[str, Any]:
     """Return customers for the dashboard and test simulator."""
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
@@ -159,7 +177,9 @@ async def list_customers(request: Request) -> dict[str, Any]:
 
 @router.get("/api/v1/support/email-drafts")
 async def list_email_drafts(
-    request: Request, status: str | None = None
+    request: Request,
+    status: str | None = None,
+    current_user: User = _RequireTicketRead,
 ) -> dict[str, Any]:
     """Return email drafts, optionally filtered by review status."""
     repository = getattr(request.app.state, "repository", None)

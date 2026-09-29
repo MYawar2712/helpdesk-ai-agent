@@ -245,7 +245,7 @@ class TestRegister:
         assert resp.status_code == 201
         body = resp.json()
         assert body["email"] == "alice@example.com"
-        assert body["role"] == "user"
+        assert body["role"].upper() == "USER"
         assert body["tenant_id"] is None
         assert body["is_active"] is True
         assert "id" in body
@@ -408,7 +408,7 @@ class TestLogin:
             algorithms=[test_settings.jwt_algorithm],
         )
         assert payload["sub"] == user_id
-        assert payload["role"] == "support_agent"
+        assert payload["role"].upper() == "SUPPORT_AGENT"
         assert "exp" in payload
 
 
