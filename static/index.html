@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Helpdesk Support Desk</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=simulator-refresh-4" />
 </head>
 <body>
   <div class="app">
@@ -116,55 +116,109 @@
         </div>
       </section>
 
-      <section id="view-simulator" class="view">
-        <div class="simulator-layout">
-          <!-- Left Panel: Customer Portal Simulator -->
-          <div class="sim-panel customer-panel">
-            <div class="panel-header">
-              <h3>📱 Customer Portal</h3>
-              <div class="customer-selector-wrapper">
-                <label for="sim-customer-select">Select Customer:</label>
-                <select id="sim-customer-select" class="sim-select">
-                  <option value="">Loading customers...</option>
-                </select>
-                <button id="sim-new-conversation-btn" class="btn btn-secondary btn-sm">New conversation</button>
-              </div>
+      <section id="view-simulator" class="view simulator-view">
+        <div class="simulator-shell">
+          <div class="simulator-toolbar">
+            <div class="simulator-toolbar-copy">
+              <div class="simulator-eyebrow"><span class="status-dot"></span> LIVE TEST WORKSPACE</div>
+              <h2>Conversation simulator</h2>
+              <p>Run realistic customer conversations and review every AI reply before it reaches the customer.</p>
             </div>
-
-            <div class="customer-info-bar" id="sim-customer-info">
-              Select a customer above to start multi-turn conversation testing.
-            </div>
-
-            <div class="chat-history-wrapper" id="sim-customer-chat">
-              <div class="chat-placeholder">
-                No active thread selected. Choose a customer and type a message below.
-              </div>
-            </div>
-
-            <div class="sim-composer">
-              <textarea id="sim-msg-input" placeholder="Type a message as the customer..."></textarea>
-              <button id="sim-send-btn" class="btn btn-primary">Send to Support Desk</button>
+            <div class="simulator-toolbar-actions">
+              <span class="api-status"><span class="status-dot"></span><span id="sim-api-status">API connected</span></span>
+              <button id="sim-refresh-btn" class="btn btn-secondary btn-sm" type="button">↻ Refresh data</button>
             </div>
           </div>
 
-          <div class="sim-panel support-panel" id="sim-support-panel">
-            <div class="panel-header">
-              <h3>🛡️ Support Desk Review Queue</h3>
-              <button id="sim-refresh-btn" class="btn btn-secondary btn-sm">🔄 Refresh</button>
-            </div>
-
-            <div class="draft-review-box" id="sim-draft-box">
-              <div class="empty-state">
-                No active draft generated yet. Send a message from the Customer Portal to trigger an AI response draft!
+          <div class="simulator-layout">
+            <section class="sim-panel customer-panel" aria-label="Customer portal simulator">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <span class="panel-icon customer-icon">✦</span>
+                  <div>
+                    <p class="panel-kicker">Customer view</p>
+                    <h3>Customer portal</h3>
+                  </div>
+                </div>
+                <span class="live-badge">TEST MODE</span>
               </div>
-            </div>
 
-            <div class="thread-history-box">
-              <h4>Thread Messages & History</h4>
-              <div id="sim-thread-messages" class="thread-messages-list">
-                <div class="chat-placeholder">Thread history will appear here.</div>
+              <div class="customer-toolbar">
+                <label class="field-label" for="sim-customer-select">Test customer</label>
+                <div class="customer-controls">
+                  <select id="sim-customer-select" class="sim-select" aria-label="Select a test customer">
+                    <option value="">Loading customers...</option>
+                  </select>
+                  <button id="sim-new-conversation-btn" class="btn btn-secondary btn-sm" type="button">＋ New thread</button>
+                </div>
               </div>
-            </div>
+
+              <div class="customer-info-bar" id="sim-customer-info">
+                <div class="customer-profile-placeholder">
+                  <span class="profile-avatar">?</span>
+                  <div><strong>No customer selected</strong><span>Choose an account to begin a conversation.</span></div>
+                </div>
+              </div>
+
+              <div class="quick-actions" aria-label="Quick test scenarios">
+                <div class="quick-actions-label"><span>Quick scenarios</span><small>Click to populate the composer</small></div>
+                <div class="quick-action-list">
+                  <button type="button" class="quick-action" data-sim-prompt="My AC stopped cooling and I need a technician."><span>🛠️</span> Technical issue</button>
+                  <button type="button" class="quick-action" data-sim-prompt="I was charged twice on my latest invoice."><span>💳</span> Billing question</button>
+                  <button type="button" class="quick-action" data-sim-prompt="Can I move my appointment to Friday morning?"><span>📅</span> Reschedule</button>
+                  <button type="button" class="quick-action" data-sim-prompt="I need to speak with a human, please."><span>🙋</span> Human handoff</button>
+                </div>
+              </div>
+
+              <div class="chat-history-wrapper" id="sim-customer-chat" role="log" aria-live="polite" aria-label="Customer conversation">
+                <div class="chat-placeholder">
+                  <span class="placeholder-icon">💬</span>
+                  <strong>Your conversation starts here</strong>
+                  <span>Select a customer, then send a message to generate an AI draft.</span>
+                </div>
+              </div>
+
+              <div class="sim-composer">
+                <div class="composer-heading"><span>Customer message</span><span id="sim-char-count">0 / 1000</span></div>
+                <textarea id="sim-msg-input" maxlength="1000" placeholder="Write as the customer..." aria-label="Customer message"></textarea>
+                <div class="composer-footer">
+                  <span class="composer-hint">Enter to send · Shift+Enter for a new line</span>
+                  <button id="sim-send-btn" class="btn btn-primary send-button" type="button"><span class="send-label">Send message</span><span class="send-arrow">→</span></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="sim-panel support-panel" id="sim-support-panel" aria-label="Support review queue">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <span class="panel-icon support-icon">◈</span>
+                  <div>
+                    <p class="panel-kicker">Agent workspace</p>
+                    <h3>Support review queue</h3>
+                  </div>
+                </div>
+                <span id="sim-draft-count" class="queue-badge">0 awaiting review</span>
+              </div>
+
+              <div class="support-context" id="sim-support-summary">
+                <span class="support-context-icon">◎</span>
+                <div><strong>Ready for a customer message</strong><span>The AI response will appear here for human review.</span></div>
+              </div>
+
+              <div class="review-section">
+                <div class="section-label-row"><span>Response review</span><span id="sim-review-state" class="review-state">Idle</span></div>
+                <div class="draft-review-box" id="sim-draft-box">
+                  <div class="empty-state"><span class="empty-state-icon">✧</span><strong>No response draft yet</strong><span>Send a customer message to generate a reviewable AI reply.</span></div>
+                </div>
+              </div>
+
+              <div class="thread-history-box">
+                <div class="section-label-row"><span>Conversation timeline</span><span id="sim-message-count" class="muted-label">0 messages</span></div>
+                <div id="sim-thread-messages" class="thread-messages-list" role="log" aria-live="polite" aria-label="Conversation timeline">
+                  <div class="chat-placeholder">Thread history will appear here.</div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </section>
@@ -183,6 +237,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=simulator-refresh-4"></script>
 </body>
 </html>

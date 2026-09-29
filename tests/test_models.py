@@ -114,13 +114,28 @@ def test_invoice_is_overdue_when_status_or_date_requires_it() -> None:
     assert past_due.is_overdue is True
 
 
+def test_ticket_normalizes_legacy_category() -> None:
+    ticket = Ticket(
+        "ticket-legacy",
+        "customer-1",
+        "Repair",
+        "Replace failed hardware",
+        "hardware",
+        TicketPriority.MEDIUM,
+        TicketStatus.OPEN,
+        NOW,
+    )
+
+    assert ticket.category == "technical"
+
+
 def test_ticket_can_escalate_only_when_active_and_high_priority() -> None:
     urgent = Ticket(
         "ticket-1",
         "customer-1",
         "Service down",
         "No access",
-        "outage",
+        "technical",
         TicketPriority.URGENT,
         TicketStatus.OPEN,
         NOW,
@@ -189,7 +204,7 @@ def test_ticket_can_escalate_only_when_active_and_high_priority() -> None:
                 "customer",
                 "title",
                 "description",
-                "category",
+                "general",
                 TicketPriority.LOW,
                 TicketStatus.OPEN,
                 NOW,

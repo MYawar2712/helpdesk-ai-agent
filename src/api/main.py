@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.graph import HelpdeskAgent
+from api.auth import router as auth_router
 from api.routes import router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
@@ -86,6 +87,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(auth_router)
 
 
 @app.exception_handler(404)

@@ -25,7 +25,7 @@ from guardrails.checks import (
     check_output,
 )
 from llm.client import LLMClient
-from models import TicketIntent
+from models import TicketIntent, normalize_ticket_category
 from tools.cancel_job import create_cancel_job_tool
 from tools.classify_intent import classify_intent
 from tools.get_all_invoices import create_get_all_invoices_tool
@@ -316,16 +316,21 @@ class HelpdeskAgent:
         category = state.get("predicted_category")
         priority = state.get("predicted_priority")
         confidence = state.get("confidence_score", 1.0)
+        if category:
+            try:
+                category = normalize_ticket_category(category)
+            except (TypeError, ValueError):
+                category = None
         if not category or not priority:
             try:
                 from ml.classifier import TicketClassifier
 
                 pred = TicketClassifier().predict(state["ticket_text"])
-                category = pred.category
+                category = normalize_ticket_category(pred.category)
                 priority = pred.priority
                 confidence = pred.confidence_score
             except Exception:
-                category, priority, confidence = "general_inquiry", "medium", 1.0
+                category, priority, confidence = "general", "medium", 1.0
 
         ticket_text = state["ticket_text"]
         customer_match = re.search(r"Customer ID:\s*([^\n]+)", ticket_text)
@@ -438,8 +443,11 @@ When the customer mentions a specific time for a job (e.g., "Monday at 9am",
 "Friday at 3pm", "tomorrow at 10am"), use the schedule_job tool with the exact
 scheduling text as input, then respond confirming the job will be scheduled for that
 time.
-When 'respond' is chosen for job locks or service requests with a specified time,
-confirm directly that the job has been scheduled for that date/time. Do NOT ask the
+For a new service request without a specific time, including requests such as
+"ASAP", do not ask the customer for a time or say that the format is invalid. The
+approval/send workflow automatically assigns a slot 2–3 hours from approval and
+creates the job. When 'respond' is chosen for job locks or service requests,
+confirm that the request is being handled and will be scheduled. Do NOT ask the
 customer to re-confirm the time. Choose 'handoff' ONLY for explicit safety emergencies
 or non-standard human support escalations.
 If Customer ID or Ticket ID is present in the input, include customer_id or id in
@@ -480,6 +488,16 @@ get_open_invoices, get_all_invoices, schedule_job, cancel_job, update_job_status
         decision = AgentDecision.model_validate(decision_data)
         if decision.route == "tool" and decision.tool_name not in self._tools:
             raise ValueError(f"Unknown or unavailable tool: {decision.tool_name}")
+        response = decision.response or ""
+        if (
+            decision.route == "respond"
+            and (decision.intent or intent) == TicketIntent.NEW_SERVICE_REQUEST.value
+        ):
+            response = (
+                "Your service visit request has been received and is awaiting "
+                "support approval. The job will be created after approval, and "
+                "the confirmation will include your job ID."
+            )
         return {
             **state,
             "predicted_category": category,
@@ -491,7 +509,7 @@ get_open_invoices, get_all_invoices, schedule_job, cancel_job, update_job_status
             "route": decision.route,
             "tool_name": decision.tool_name or "",
             "tool_input": decision.tool_input,
-            "response": decision.response or "",
+            "response": response,
             "handoff_reason": decision.handoff_reason or "",
         }
 
@@ -544,6 +562,43 @@ get_open_invoices, get_all_invoices, schedule_job, cancel_job, update_job_status
                 tool_input["customer_id"] = str(tool_input["customer_id"])
             if "job_id" in tool_input and not isinstance(tool_input["job_id"], str):
                 tool_input["job_id"] = str(tool_input["job_id"])
+            # Reschedule requests sometimes arrive without the LLM's
+            # ``new_time`` field. The original message still contains the
+            # requested date/time, which the update tool can parse safely.
+            if (
+                state["tool_name"] == "update_job_status"
+                and (
+                    state.get("intent") == TicketIntent.RESCHEDULE_JOB.value
+                    or "reschedul" in state["ticket_text"].lower()
+                )
+                and not tool_input.get("new_time")
+            ):
+                tool_input["new_time"] = state["ticket_text"]
+        elif state["tool_name"] == "schedule_job":
+            # The model sometimes passes the service type (for example,
+            # "technician") instead of the customer's full scheduling text.
+            # The date parser needs the complete request, so always give the
+            # scheduling tool the original ticket text as a reliable fallback.
+            scheduling_value = tool_input.get("scheduling_request") or tool_input.get(
+                "text"
+            )
+            if not isinstance(scheduling_value, str) or not any(
+                marker in scheduling_value.lower()
+                for marker in (
+                    " at ",
+                    " am",
+                    " pm",
+                    "tomorrow",
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                )
+            ):
+                tool_input["scheduling_request"] = state["ticket_text"]
 
         # Pre-check: prevent querying another customer's ID explicitly
         target_id = tool_input.get("id") or tool_input.get("customer_id")

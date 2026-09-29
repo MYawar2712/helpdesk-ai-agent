@@ -1,12 +1,14 @@
 import sqlite3
 
+import pytest
+
 from db.queries import (
     get_high_value_disputed_customers,
     get_jobs_per_engineer,
     get_overdue_invoices,
     get_tickets_by_category,
 )
-from db.seed import seed_database
+from db.seed import initialize_database, seed_database
 
 
 def test_schema_and_seed_create_integrity_checked_database() -> None:
@@ -64,11 +66,53 @@ def test_ticket_category_aggregation() -> None:
     result = get_tickets_by_category(connection)
 
     assert result == [
-        {"category": "access", "ticket_count": 3},
         {"category": "billing", "ticket_count": 3},
-        {"category": "hardware", "ticket_count": 2},
-        {"category": "network", "ticket_count": 2},
+        {"category": "general", "ticket_count": 3},
+        {"category": "technical", "ticket_count": 4},
     ]
+
+
+def test_ticket_category_constraint_rejects_legacy_labels() -> None:
+    connection = sqlite3.connect(":memory:")
+    seed_database(connection)
+
+    with pytest.raises(sqlite3.IntegrityError, match="invalid ticket category"):
+        connection.execute(
+            "UPDATE tickets SET category = 'hardware' WHERE id = 'ticket-1'"
+        )
+
+
+def test_initialize_database_migrates_legacy_category_labels() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE tickets (
+            id TEXT PRIMARY KEY,
+            customer_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO tickets
+            (id, customer_id, title, description, category, priority, status)
+        VALUES ('legacy-ticket', 'customer-1', 'Legacy', 'Legacy record',
+                'hardware', 'low', 'open')
+        """
+    )
+
+    initialize_database(connection)
+
+    category = connection.execute(
+        "SELECT category FROM tickets WHERE id = 'legacy-ticket'"
+    ).fetchone()[0]
+    assert category == "technical"
 
 
 def test_overdue_invoice_join_returns_customer_details() -> None:

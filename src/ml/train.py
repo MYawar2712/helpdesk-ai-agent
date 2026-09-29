@@ -15,6 +15,8 @@ from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
+from models import normalize_ticket_category
+
 DEFAULT_DATABASE = Path(__file__).parents[2] / "db" / "helpdesk.sqlite3"
 DEFAULT_MODEL_PATH = Path(__file__).parents[2] / "models" / "ticket_classifier.joblib"
 
@@ -33,28 +35,43 @@ SYNTHETIC_RECORDS = [
     ("credit card payment failed at checkout", "billing", "high"),
     ("need a copy of my monthly invoice", "billing", "low"),
     ("billing address needs to be updated", "billing", "low"),
-    ("service completely down across all sites", "outage", "urgent"),
-    ("server completely down across all sites", "outage", "urgent"),
-    ("production outage all users cannot connect", "outage", "urgent"),
-    ("network unavailable since this morning", "outage", "high"),
-    ("website is returning errors for customers", "outage", "high"),
-    ("intermittent connection outage in our office", "outage", "high"),
-    ("monitoring reports a service interruption", "outage", "medium"),
-    ("how do I change my account password", "general_inquiry", "low"),
-    ("please explain the available support plans", "general_inquiry", "low"),
-    ("where can I find the user documentation", "general_inquiry", "low"),
-    ("question about account settings", "general_inquiry", "low"),
-    ("request information about onboarding", "general_inquiry", "medium"),
-    ("need help configuring notification preferences", "general_inquiry", "medium"),
-    ("laptop will not boot after update", "hardware", "high"),
-    ("broken monitor needs replacement", "hardware", "medium"),
-    ("keyboard and mouse are not working", "hardware", "medium"),
-    ("server disk has failed and is beeping", "hardware", "urgent"),
-    ("printer is offline and cannot print", "hardware", "medium"),
-    ("new workstation equipment request", "hardware", "low"),
-    ("ac repair job lock technician service request", "hardware", "medium"),
-    ("air conditioning unit broken needs repair visit", "hardware", "medium"),
-    ("schedule job lock for ac maintenance technician", "hardware", "medium"),
+    ("service completely down across all sites", "technical", "urgent"),
+    ("server completely down across all sites", "technical", "urgent"),
+    ("production outage all users cannot connect", "technical", "urgent"),
+    ("network unavailable since this morning", "technical", "high"),
+    ("website is returning errors for customers", "technical", "high"),
+    ("intermittent connection outage in our office", "technical", "high"),
+    ("monitoring reports a service interruption", "technical", "medium"),
+    ("how do I change my account password", "general", "low"),
+    ("please explain the available support plans", "general", "low"),
+    ("where can I find the user documentation", "general", "low"),
+    ("question about account settings", "general", "low"),
+    ("request information about onboarding", "general", "medium"),
+    ("need help configuring notification preferences", "general", "medium"),
+    ("laptop will not boot after update", "technical", "high"),
+    ("broken monitor needs replacement", "technical", "medium"),
+    ("keyboard and mouse are not working", "technical", "medium"),
+    ("server disk has failed and is beeping", "technical", "urgent"),
+    ("printer is offline and cannot print", "technical", "medium"),
+    ("new workstation equipment request", "technical", "low"),
+    ("ac repair job lock technician service request", "technical", "medium"),
+    ("air conditioning unit broken needs repair visit", "technical", "medium"),
+    ("schedule job lock for ac maintenance technician", "technical", "medium"),
+    ("move my technician appointment to another day", "scheduling", "medium"),
+    ("please book a service visit for next week", "scheduling", "low"),
+    ("reschedule my technician visit for next week", "scheduling", "medium"),
+    ("my confirmed appointment is tomorrow morning", "scheduling", "medium"),
+    ("technician has not arrived for my appointment", "scheduling", "high"),
+    ("is this repair covered by my warranty", "warranty", "medium"),
+    ("what does the warranty policy cover", "warranty", "low"),
+    ("warranty claim for a failed compressor", "warranty", "medium"),
+    ("are replacement parts covered by warranty", "warranty", "low"),
+    ("my warranty expired last month", "warranty", "medium"),
+    ("please cancel my upcoming service visit", "cancellation", "medium"),
+    ("cancel my appointment booking", "cancellation", "low"),
+    ("cancel my service appointment", "cancellation", "medium"),
+    ("stop my upcoming technician visit", "cancellation", "medium"),
+    ("terminate my subscription service", "cancellation", "low"),
 ]
 
 
@@ -79,16 +96,24 @@ def load_database_records(database_path: Path) -> list[TrainingRecord]:
         rows = connection.execute(
             "SELECT title, description, category, priority FROM tickets"
         ).fetchall()
-    category_map = {"network": "outage", "access": "general_inquiry"}
-    return [
-        TrainingRecord(
-            f"{title}. {description}",
-            category_map.get(str(category).lower(), str(category).lower()),
-            str(priority).lower(),
+
+    records: list[TrainingRecord] = []
+    for title, description, category, priority in rows:
+        if not title or not description or not category or not priority:
+            continue
+        try:
+            normalized_category = normalize_ticket_category(str(category))
+        except (TypeError, ValueError):
+            # Do not train on labels outside the canonical category contract.
+            continue
+        records.append(
+            TrainingRecord(
+                f"{title}. {description}",
+                normalized_category,
+                str(priority).lower(),
+            )
         )
-        for title, description, category, priority in rows
-        if title and description and category and priority
-    ]
+    return records
 
 
 def build_dataset(database_path: Path = DEFAULT_DATABASE) -> list[TrainingRecord]:
@@ -135,7 +160,7 @@ def train_and_save(
     artifact = {
         "category": _train_target(records, "category"),
         "priority": _train_target(records, "priority"),
-        "version": 1,
+        "version": 2,
     }
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(artifact, model_path)

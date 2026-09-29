@@ -71,6 +71,8 @@ def test_embedding_model_uses_requested_qwen_model_and_runtime_config() -> None:
     assert model.model == EMBEDDING_MODEL
     assert model.openai_api_key.get_secret_value() == "test-key"
     assert str(model.openai_api_base).rstrip("/") == "https://example.test/v1"
+    assert model.check_embedding_ctx_length is False
+    assert model.chunk_size == 20
 
 
 def test_invalid_search_arguments_are_rejected(tmp_path: Path) -> None:

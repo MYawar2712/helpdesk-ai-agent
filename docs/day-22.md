@@ -13,7 +13,7 @@ Created 25 structured test cases covering:
 - **Knowledge-base / RAG questions** (Boiler pressure, AC cooling, billing address, electrical safety, warranty coverage, refund timeline)
 - **Human handoff cases** (Dangerous electrical smell, legal dispute, gas leak emergency)
 - **Ambiguous & off-topic queries** (Chocolate cake recipe, gibberish)
-- **Ticket classification & direct responses** (Outage, billing, hardware, general inquiries)
+- **Ticket classification & direct responses** (technical, billing, scheduling, warranty, cancellation, and general inquiries)
 
 Each case specifies:
 `id`, `case_type`, `input_text`, `expected_route`, `expected_tool`, `expected_output_contains`, `requires_human_handoff`

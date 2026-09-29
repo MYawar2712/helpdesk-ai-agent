@@ -13,7 +13,7 @@ def test_ticket_distribution_counts_and_percentages() -> None:
     tickets = pd.DataFrame(
         {
             "customer_id": ["c1", "c1", "c2", "c2"],
-            "category": ["billing", "billing", "access", "billing"],
+            "category": ["billing", "billing", "general", "billing"],
             "priority": ["high", "low", "high", "high"],
         }
     )

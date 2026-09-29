@@ -4,7 +4,49 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+
+from models import TicketCategory
+
+# ── Authentication schemas ────────────────────────────────────────────────────
+
+
+class RegisterRequest(BaseModel):
+    """Payload for creating a new user account."""
+
+    email: EmailStr
+    password: str = Field(min_length=8, description="Must be at least 8 characters.")
+    role: str = Field(default="user", description="Initial role assigned to the user.")
+    tenant_id: str | None = Field(
+        default=None,
+        description="Tenant to enroll the user in. Omit for super-admin accounts.",
+    )
+
+
+class LoginRequest(BaseModel):
+    """Credentials submitted during the login flow."""
+
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """Returned upon successful authentication."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    """Public representation of the authenticated user."""
+
+    id: str
+    email: str
+    role: str
+    tenant_id: str | None
+    is_active: bool
+
+    model_config = {"from_attributes": True}
 
 
 class TicketIntakeRequest(BaseModel):
@@ -13,13 +55,13 @@ class TicketIntakeRequest(BaseModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
     customer_id: str = Field(min_length=1)
-    category_hint: str | None = None
+    category_hint: TicketCategory | None = None
 
 
 class TicketClassificationResponse(BaseModel):
     """Combined ML classification and business routing decision."""
 
-    predicted_category: str
+    predicted_category: TicketCategory
     predicted_priority: str
     confidence_score: float = Field(ge=0.0, le=1.0)
     should_escalate: bool

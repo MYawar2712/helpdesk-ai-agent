@@ -86,7 +86,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     customer_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
-    category TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (category IN (
+        'technical', 'billing', 'scheduling', 'warranty', 'cancellation', 'general'
+    )),
     priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
     confidence REAL CHECK (confidence >= 0.0 AND confidence <= 1.0),
     needs_escalation INTEGER CHECK (needs_escalation IN (0, 1)),

@@ -56,6 +56,10 @@ def create_embedding_model(
         model=model,
         api_key=runtime_config.api_key,
         base_url=runtime_config.base_url,
+        # DashScope expects text strings, while LangChain's default
+        # length-safe mode sends OpenAI token IDs to some compatible providers.
+        check_embedding_ctx_length=False,
+        chunk_size=20,
     )
 
 

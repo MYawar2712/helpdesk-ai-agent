@@ -8,7 +8,7 @@ def context(**ticket: object) -> dict:
 
 def prediction(**values: object) -> dict:
     return {
-        "category": "general_inquiry",
+        "category": "general",
         "priority": "low",
         "confidence_score": 0.95,
         **values,
@@ -33,7 +33,7 @@ def test_high_value_urgent_ticket_uses_vip_queue() -> None:
         context(
             title="Service issue", open_invoices=[{"status": "overdue", "amount": 1500}]
         ),
-        prediction(category="outage", priority="urgent"),
+        prediction(category="technical", priority="urgent"),
     )
     assert result.target_queue == "vip_priority_queue"
     assert result.should_escalate is True
@@ -53,8 +53,8 @@ def test_financial_dispute_uses_billing_specialists() -> None:
 def test_standard_ticket_uses_category_queue() -> None:
     result = EscalationEngine().evaluate_ticket_rules(
         context(title="Replace keyboard"),
-        prediction(category="hardware", priority="low"),
+        prediction(category="technical", priority="low"),
     )
-    assert result.target_queue == "hardware_support_queue"
+    assert result.target_queue == "technical_support_queue"
     assert result.should_escalate is False
     assert result.requires_human_handoff is False

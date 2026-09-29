@@ -6,7 +6,8 @@ Day 9 combines ML predictions with deterministic business rules in
 The engine evaluates confidence, priority, ticket text, and overdue invoice
 balances. Low-confidence tickets go to `tier_1_manual_review`; urgent or
 high-value tickets go to `vip_priority_queue`; financial disputes go to
-`billing_specialists`. Other tickets use standard category queues.
+`billing_specialists`. Other tickets use the canonical category queues for
+`technical`, `billing`, `scheduling`, `warranty`, `cancellation`, and `general`.
 
 Each decision returns an `EscalationResult` containing the destination queue,
 escalation state, human-handoff flag, optional priority override, and readable

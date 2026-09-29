@@ -41,6 +41,44 @@ def initialize_database(connection: sqlite3.Connection) -> None:
     for column, statement in migrations.items():
         if column not in ticket_columns:
             connection.execute(statement)
+
+    # Migrate labels from the original triage taxonomy before enforcing the
+    # canonical category contract on new writes.
+    connection.execute(
+        """
+        UPDATE tickets
+        SET category = CASE lower(trim(category))
+            WHEN 'hardware' THEN 'technical'
+            WHEN 'outage' THEN 'technical'
+            WHEN 'network' THEN 'technical'
+            WHEN 'general_inquiry' THEN 'general'
+            WHEN 'access' THEN 'general'
+            ELSE category
+        END
+        """
+    )
+    connection.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS tickets_category_insert
+        BEFORE INSERT ON tickets
+        WHEN NEW.category NOT IN (
+            'technical', 'billing', 'scheduling', 'warranty', 'cancellation', 'general'
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid ticket category');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS tickets_category_update
+        BEFORE UPDATE OF category ON tickets
+        WHEN NEW.category NOT IN (
+            'technical', 'billing', 'scheduling', 'warranty', 'cancellation', 'general'
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid ticket category');
+        END;
+        """
+    )
+
     # Indexes that depend on the migrated columns must be created only after
     # the columns exist, so older databases upgraded via the migrations above
     # do not fail when the schema script runs first.
@@ -358,15 +396,15 @@ def seed_database(connection: sqlite3.Connection) -> None:
             status,
         )
         for number, category, priority, status in [
-            (1, "access", "high", "open"),
+            (1, "general", "high", "open"),
             (2, "billing", "medium", "in_progress"),
-            (3, "hardware", "urgent", "escalated"),
-            (4, "access", "low", "resolved"),
-            (5, "network", "high", "open"),
+            (3, "technical", "urgent", "escalated"),
+            (4, "general", "low", "resolved"),
+            (5, "technical", "high", "open"),
             (6, "billing", "urgent", "escalated"),
-            (7, "hardware", "medium", "closed"),
-            (8, "network", "low", "open"),
-            (9, "access", "medium", "in_progress"),
+            (7, "technical", "medium", "closed"),
+            (8, "technical", "low", "open"),
+            (9, "general", "medium", "in_progress"),
             (10, "billing", "high", "open"),
         ]
     ]

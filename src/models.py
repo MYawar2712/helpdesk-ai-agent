@@ -45,6 +45,44 @@ class TicketStatus(StrEnum):
     PROCESSED = "processed"
 
 
+class TicketCategory(StrEnum):
+    """Canonical support-ticket categories used by every classifier."""
+
+    TECHNICAL = "technical"
+    BILLING = "billing"
+    SCHEDULING = "scheduling"
+    WARRANTY = "warranty"
+    CANCELLATION = "cancellation"
+    GENERAL = "general"
+
+
+# These aliases are accepted only at compatibility boundaries. New records are
+# always persisted using the canonical TicketCategory values above.
+_LEGACY_CATEGORY_ALIASES: Final[dict[str, str]] = {
+    "hardware": TicketCategory.TECHNICAL.value,
+    "outage": TicketCategory.TECHNICAL.value,
+    "network": TicketCategory.TECHNICAL.value,
+    "general_inquiry": TicketCategory.GENERAL.value,
+    "access": TicketCategory.GENERAL.value,
+}
+
+
+def normalize_ticket_category(value: str) -> str:
+    """Return a canonical ticket category, migrating legacy labels on input."""
+
+    if not isinstance(value, str):
+        raise TypeError("ticket category must be a string")
+    normalized = value.strip().lower()
+    normalized = _LEGACY_CATEGORY_ALIASES.get(normalized, normalized)
+    try:
+        return TicketCategory(normalized).value
+    except ValueError as error:
+        allowed = ", ".join(category.value for category in TicketCategory)
+        raise ValueError(
+            f"Unknown ticket category {value!r}; expected one of: {allowed}"
+        ) from error
+
+
 class TicketIntent(StrEnum):
     """The classified intent of a customer's inbound message."""
 
@@ -223,6 +261,7 @@ class Ticket:
     def __post_init__(self) -> None:
         for name in ("id", "customer_id", "title", "description", "category"):
             _require_text(getattr(self, name), name)
+        self.category = normalize_ticket_category(self.category)
         if not isinstance(self.priority, TicketPriority):
             raise TypeError("priority must be a TicketPriority")
         if not isinstance(self.status, TicketStatus):

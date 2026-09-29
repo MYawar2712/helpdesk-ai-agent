@@ -9,6 +9,7 @@ from typing import Any
 import joblib
 
 from ml.train import DEFAULT_MODEL_PATH
+from models import normalize_ticket_category
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class TicketClassifier:
         if not isinstance(text, str) or not text.strip():
             raise ValueError("text must be a non-empty string")
         category, category_confidence = self._predict_one(self.category_model, text)
+        category = normalize_ticket_category(category)
         priority, priority_confidence = self._predict_one(self.priority_model, text)
         confidence = min(category_confidence, priority_confidence)
         return TicketPrediction(

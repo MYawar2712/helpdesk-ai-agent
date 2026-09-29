@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from models import EscalationResult
+from models import EscalationResult, normalize_ticket_category
 
 
 class EscalationEngine:
@@ -14,10 +14,12 @@ class EscalationEngine:
     CONFIDENCE_THRESHOLD = 0.60
     DISPUTE_KEYWORDS = ("refund", "chargeback", "legal", "overcharge")
     CATEGORY_QUEUES = {
+        "technical": "technical_support_queue",
         "billing": "billing_queue",
-        "outage": "technical_outage_queue",
-        "hardware": "hardware_support_queue",
-        "general_inquiry": "general_support_queue",
+        "scheduling": "scheduling_queue",
+        "warranty": "warranty_queue",
+        "cancellation": "cancellation_queue",
+        "general": "general_support_queue",
     }
 
     def evaluate_ticket_rules(
@@ -26,7 +28,11 @@ class EscalationEngine:
         """Evaluate ML output and the ticket's customer context."""
 
         confidence = self._number(ml_prediction.get("confidence_score"), 0.0)
-        category = self._text(ml_prediction.get("category"), "general_inquiry")
+        raw_category = self._text(ml_prediction.get("category"), "general")
+        try:
+            category = normalize_ticket_category(raw_category)
+        except (TypeError, ValueError):
+            category = "general"
         priority = self._text(ml_prediction.get("priority"), "medium").lower()
         ticket = self._mapping(ticket_context.get("ticket"))
         text = " ".join(

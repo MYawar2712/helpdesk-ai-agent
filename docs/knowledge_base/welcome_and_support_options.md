@@ -1,5 +1,5 @@
 # Welcome and support options
-Topic: general_inquiry
+Topic: general
 
 When a customer says hello, welcome them warmly and ask: “How can I assist you today?” Explain that support can help with:
 

@@ -11,6 +11,9 @@ accuracy, weighted F1, and classification reports, then saves the models to
 
 `TicketClassifier` loads the artifact and returns category, priority, and a
 confidence score. Predictions below `0.60` are flagged for LLM or human review.
+The canonical category contract is `technical`, `billing`, `scheduling`,
+`warranty`, `cancellation`, and `general`; legacy labels are normalized when
+reading older records.
 
 Train the models with:
 

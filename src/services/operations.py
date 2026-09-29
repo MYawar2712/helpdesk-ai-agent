@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from models import HandledBy, TicketIntent, TicketStatus
+from models import (
+    HandledBy,
+    TicketIntent,
+    TicketStatus,
+    normalize_ticket_category,
+)
 from utils.date_parser import parse_natural_datetime
 
 _ALLOWED_JOB_STATUS_TRANSITIONS: dict[str, set[str]] = {
@@ -176,8 +182,7 @@ class HelpdeskOperationsService:
         handled_by: str = HandledBy.PENDING.value,
         resolution: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new ticket record in the database for an authenticated customer
-        using ML classifier."""
+        """Create a ticket using the canonical ML category contract."""
         self._require_verified_customer(identity.customer_id)
         ticket_id = f"ticket-{uuid4().hex}"
 
@@ -189,8 +194,11 @@ class HelpdeskOperationsService:
 
             persisted_intent = classify_intent(text).value
         persisted_handled_by = HandledBy(handled_by).value
+        requested_category = (
+            normalize_ticket_category(category) if category is not None else None
+        )
         confidence = 1.0
-        final_category = category or "general_inquiry"
+        final_category = requested_category or "general"
         final_priority = priority or "medium"
         needs_escalation = 0
         escalation_reason = None
@@ -199,18 +207,16 @@ class HelpdeskOperationsService:
             from ml.classifier import TicketClassifier
 
             prediction = TicketClassifier().predict(text)
-            inferred_skill = infer_required_skill(text)
-            if category is None:
-                if inferred_skill is not None:
-                    final_category = "hardware"
-                else:
-                    final_category = prediction.category
+            if requested_category is None:
+                final_category = normalize_ticket_category(prediction.category)
             if priority is None:
                 final_priority = prediction.priority
             confidence = prediction.confidence_score
         except Exception:
-            if category is None and infer_required_skill(text) is not None:
-                final_category = "hardware"
+            # Keep a valid canonical category when the optional ML model is
+            # unavailable.  An explicitly supplied category is never replaced.
+            if requested_category is None:
+                final_category = "general"
 
         dispute_keywords = (
             "refund",
@@ -720,7 +726,17 @@ class HelpdeskOperationsService:
             inferred_skill = infer_required_skill(ticket["description"])
             if inferred_skill is not None:
                 parsed_dt = parse_natural_datetime(ticket["description"])
-                scheduled_at_iso = parsed_dt.isoformat() if parsed_dt else None
+                # If the customer did not request a specific time, reserve a
+                # near-term appointment when the approved email is sent.
+                # Keep this here (rather than at draft creation) so approval
+                # remains the point at which the job is actually created.
+                if parsed_dt is None:
+                    scheduled_dt = datetime.now() + timedelta(
+                        minutes=random.randint(120, 180)
+                    )
+                    scheduled_at_iso = scheduled_dt.isoformat()
+                else:
+                    scheduled_at_iso = parsed_dt.isoformat()
                 try:
                     created_job = self.create_job_for_ticket(
                         CustomerIdentity(customer_id=draft["customer_id"]),
@@ -731,45 +747,19 @@ class HelpdeskOperationsService:
                         service_area="London",
                         scheduled_at=scheduled_at_iso,
                     )
-                    created_job_id = created_job.get("id")
+                    # create_job_for_ticket returns the job nested under
+                    # ``job``; reading the top-level ID silently left the
+                    # successful scheduling response without a job ID.
+                    created_job_id = (created_job.get("job") or {}).get("id")
                 except Exception:
                     pass
 
-        # Read the relationship back from the ticket as the source of truth.
-        # This also covers jobs created earlier in the workflow or a retry where
-        # the ticket was already linked to a job.
-        if not created_job_id and ticket is not None:
-            refreshed_ticket = self._one(
-                "SELECT job_id, related_job_id FROM tickets WHERE id = ?",
-                (draft["ticket_id"],),
-            )
-            if refreshed_ticket is not None:
-                created_job_id = (
-                    refreshed_ticket["job_id"] or refreshed_ticket["related_job_id"]
-                )
-
         final_message = draft["human_edited_version"] or draft["original_ai_draft"]
-        if created_job_id:
-            failure_phrases = (
-                "unable to create",
-                "could not parse",
-                "unable to set up",
-                "failed to create",
+        if created_job_id and created_job_id not in final_message:
+            final_message = (
+                f"{final_message}\n\nYour job ID is {created_job_id}. "
+                "Please keep this ID for future reference."
             )
-            if any(phrase in final_message.lower() for phrase in failure_phrases):
-                schedule_text = (
-                    ticket["description"] if ticket else "your requested time"
-                )
-                final_message = (
-                    f"Your AC repair job has been created for the requested schedule: "
-                    f"{schedule_text}. Your job ID is {created_job_id}. "
-                    "Please keep this ID for future reference."
-                )
-            elif created_job_id not in final_message:
-                final_message = (
-                    f"{final_message}\n\nYour job ID is {created_job_id}. "
-                    "Please keep it for future reference."
-                )
         sent_id = f"sent-{uuid4().hex}"
 
         self.connection.execute(
@@ -797,6 +787,7 @@ class HelpdeskOperationsService:
             draft["customer_id"],
             {"ticket_id": draft["ticket_id"], "draft_id": draft_id},
         )
+
         self.connection.commit()
         sent_row = dict(self._one("SELECT * FROM sent_emails WHERE id = ?", (sent_id,)))
         sent_row["status"] = "sent"
@@ -914,22 +905,52 @@ class HelpdeskOperationsService:
         updated = dict(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,)))
         return {"found": True, "job": updated, "previous_status": current_status}
 
+    def reschedule_customer_job(
+        self, identity: CustomerIdentity, job_id: str, scheduled_at: str
+    ) -> dict[str, Any]:
+        """Change an owned job's appointment time and keep it scheduled."""
+        job = self._owned_row("jobs", job_id, identity.customer_id)
+        self._validate_scheduled_at(scheduled_at)
+        self.connection.execute(
+            "UPDATE jobs SET scheduled_at = ?, status = 'scheduled' WHERE id = ?",
+            (scheduled_at, job_id),
+        )
+        self._audit(
+            "customer",
+            identity.customer_id,
+            "job_rescheduled",
+            "job",
+            job_id,
+            identity.customer_id,
+            {"scheduled_at": scheduled_at},
+        )
+        self.connection.commit()
+        updated = dict(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,)))
+        return {"found": True, "job": updated, "previous_status": job["status"]}
+
     def _should_create_job_for_ticket(self, ticket: sqlite3.Row | None) -> bool:
         if ticket is None:
             return False
-        if ticket["job_id"] or ticket["needs_escalation"]:
-            return False
-        if ticket["category"] == "billing":
+        if ticket["job_id"]:
             return False
         intent_value = ticket["intent"] if "intent" in ticket.keys() else None
         if intent_value:
             try:
-                if TicketIntent(intent_value).is_agent_only:
+                intent = TicketIntent(intent_value)
+                if intent.is_agent_only:
                     return False
+                if intent is TicketIntent.NEW_SERVICE_REQUEST:
+                    return True
             except ValueError:
                 pass
+        if ticket["needs_escalation"] or ticket["category"] == "billing":
+            return False
         if _is_agent_only_intent(ticket["description"]):
             return False
+        # A concrete service request must still create its job even when the
+        # classifier marked the ticket for review due to low confidence.
+        if infer_required_skill(ticket["description"]) is not None:
+            return True
         return True
 
     def _require_verified_customer(self, customer_id: str) -> None:

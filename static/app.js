@@ -12,6 +12,12 @@ let state = {
     ticketId: "",
     messages: [],
     draft: null,
+    lastResponse: "",
+    route: "",
+    toolName: "",
+    sources: [],
+    isSending: false,
+    isApproving: false,
     conversations: {},
   },
 };
@@ -24,26 +30,45 @@ function $$ (selector) {
   return document.querySelectorAll(selector);
 }
 
+function setApiStatus(isOnline) {
+  const status = document.querySelector("#sim-api-status");
+  if (!status) return;
+  status.textContent = isOnline ? "API connected" : "API unavailable";
+  status.closest(".api-status")?.classList.toggle("offline", !isOnline);
+}
+
 async function get(path) {
-  const res = await fetch(API_BASE + path);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+  try {
+    const res = await fetch(API_BASE + path);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    setApiStatus(true);
+    return await res.json();
+  } catch (error) {
+    if (error instanceof TypeError) setApiStatus(false);
+    throw error;
   }
-  return res.json();
 }
 
 async function post(path, body) {
-  const res = await fetch(API_BASE + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+  try {
+    const res = await fetch(API_BASE + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    setApiStatus(true);
+    return await res.json();
+  } catch (error) {
+    if (error instanceof TypeError) setApiStatus(false);
+    throw error;
   }
-  return res.json();
 }
 
 function formatDate(iso) {
@@ -64,7 +89,7 @@ function truncate(text, len = 40) {
 function showToast(message, type = "info") {
   const toast = $("#toast");
   toast.textContent = message;
-  toast.classList.add("show");
+  toast.className = `toast toast-${type} show`;
   setTimeout(() => toast.classList.remove("show"), 3000);
 }
 
@@ -77,20 +102,59 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function formatMessageTime(value) {
+  if (!value) return "now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "now";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function getInitials(name) {
+  return String(name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "?";
+}
+
+function renderMessageMarkup(messages) {
+  return messages
+    .map((message) => {
+      const sender = message.sender || "system";
+      const senderClass = ["customer", "agent", "system"].includes(sender) ? sender : "agent";
+      const senderLabel = senderClass === "customer" ? "Customer" : senderClass === "system" ? "Status" : "Support desk";
+      const body = escapeHtml(message.body || "").replace(/\n/g, "<br>");
+      const time = formatMessageTime(message.createdAt || message.created_at);
+      return `
+        <div class="chat-bubble ${senderClass}" aria-label="${senderLabel} message">
+          <div class="chat-bubble-meta"><span>${senderLabel}</span><span class="chat-bubble-time">${time}</span></div>
+          <div>${body}</div>
+        </div>`;
+    })
+    .join("");
+}
+
 function renderSimulatorMessages() {
   const messages = state.simulator.messages;
   const customerChat = $("#sim-customer-chat");
   const threadChat = $("#sim-thread-messages");
+  const messageCount = $("#sim-message-count");
+  if (messageCount) messageCount.textContent = `${messages.length} message${messages.length === 1 ? "" : "s"}`;
+
   if (!messages.length) {
-    customerChat.innerHTML = '<div class="chat-placeholder">No messages yet. Type a message below to start the conversation.</div>';
+    customerChat.innerHTML = `
+      <div class="chat-placeholder">
+        <span class="placeholder-icon">💬</span>
+        <strong>Your conversation starts here</strong>
+        <span>Select a customer, then send a message to generate an AI draft.</span>
+      </div>`;
     threadChat.innerHTML = '<div class="chat-placeholder">Thread history will appear here.</div>';
     return;
   }
-  const messageHtml = messages.map((message) => `
-    <div class="chat-bubble ${message.sender === "customer" ? "customer" : message.sender === "system" ? "system" : "agent"}">
-      <div class="chat-bubble-meta">${message.sender === "customer" ? "Customer" : message.sender === "system" ? "Status" : "Support desk"}</div>
-      <div>${escapeHtml(message.body).replaceAll("\\n", "<br>")}</div>
-    </div>`).join("");
+
+  const messageHtml = renderMessageMarkup(messages);
   customerChat.innerHTML = messageHtml;
   threadChat.innerHTML = messageHtml;
   customerChat.scrollTop = customerChat.scrollHeight;
@@ -99,10 +163,42 @@ function renderSimulatorMessages() {
 
 function renderSimulatorCustomer() {
   const customer = state.customers.find((item) => item.id === state.simulator.customerId);
-  $("#sim-customer-info").textContent = customer
-    ? `${customer.name} · ${customer.email} · Conversation thread ${state.simulator.threadId || "will be created on first message"}`
-    : "Select a customer above to start multi-turn conversation testing.";
+  const info = $("#sim-customer-info");
+  const supportSummary = $("#sim-support-summary");
+  if (customer) {
+    info.innerHTML = `
+      <div class="customer-profile">
+        <span class="profile-avatar">${escapeHtml(getInitials(customer.name))}</span>
+        <div>
+          <strong>${escapeHtml(customer.name)}</strong>
+          <span>${escapeHtml(customer.email)}${customer.company ? ` · ${escapeHtml(customer.company)}` : ""}</span>
+          <span class="profile-thread">${escapeHtml(state.simulator.threadId || "New thread · starts on first message")}</span>
+        </div>
+      </div>`;
+  } else {
+    info.innerHTML = `
+      <div class="customer-profile-placeholder">
+        <span class="profile-avatar">?</span>
+        <div><strong>No customer selected</strong><span>Choose an account to begin a conversation.</span></div>
+      </div>`;
+  }
+
+  if (state.simulator.draft) {
+    supportSummary.innerHTML = `
+      <span class="support-context-icon">✦</span>
+      <div><strong>Draft ready for human review</strong><span>Edit the response or approve it when the customer-facing reply is ready.</span></div>`;
+  } else if (state.simulator.messages.length) {
+    supportSummary.innerHTML = `
+      <span class="support-context-icon">◎</span>
+      <div><strong>Conversation in progress</strong><span>Send another customer message to generate the next response draft.</span></div>`;
+  } else {
+    supportSummary.innerHTML = `
+      <span class="support-context-icon">◎</span>
+      <div><strong>Ready for a customer message</strong><span>The AI response will appear here for human review.</span></div>`;
+  }
+
   renderSimulatorMessages();
+  renderSimulatorDraft();
 }
 
 function loadSimulatorCustomers() {
@@ -115,14 +211,47 @@ function loadSimulatorCustomers() {
     }).catch((err) => showToast(err.message, "error"));
     return;
   }
-  select.innerHTML = '<option value="">Choose one of the five test customers...</option>' +
-    state.customers.slice(0, 5).map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)} (${escapeHtml(customer.id)})</option>`).join("");
+  select.innerHTML = '<option value="">Choose a customer...</option>' +
+    state.customers.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)} (${escapeHtml(customer.id)})</option>`).join("");
   select.value = state.simulator.customerId;
   renderSimulatorCustomer();
 }
 
-async function resetSimulatorThread(customerId) {
-  state.simulator = { customerId, threadId: "", ticketId: "", messages: [], draft: null, conversations: state.simulator.conversations || {} };
+async function loadSimulatorDraft(customerId, ticketId) {
+  if (!customerId || !ticketId) {
+    state.simulator.draft = null;
+    state.simulator.lastResponse = "";
+    return;
+  }
+  try {
+    const data = await get("/support/email-drafts?status=human_review");
+    const draft = data.drafts.find(
+      (item) => item.customer_id === customerId && item.ticket_id === ticketId
+    );
+    state.simulator.draft = draft || null;
+    state.simulator.lastResponse = draft
+      ? draft.human_edited_version || draft.original_ai_draft || ""
+      : "";
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function resetSimulatorThread(customerId, { loadDraft = true } = {}) {
+  state.simulator = {
+    customerId,
+    threadId: "",
+    ticketId: "",
+    messages: [],
+    draft: null,
+    lastResponse: "",
+    route: "",
+    toolName: "",
+    sources: [],
+    isSending: false,
+    isApproving: false,
+    conversations: state.simulator.conversations || {},
+  };
   renderSimulatorCustomer();
   if (!customerId) return;
   try {
@@ -132,18 +261,58 @@ async function resetSimulatorThread(customerId) {
       state.simulator.threadId = previous.thread_id;
       state.simulator.ticketId = previous.ticket_id || "";
       state.simulator.messages = previous.messages.map((message) => ({
-        sender: message.sender_type === "customer" ? "customer" : "agent",
+        sender: message.sender_type === "customer" ? "customer" : message.sender_type === "system" ? "system" : "agent",
         body: message.content,
+        createdAt: message.created_at,
       }));
-      renderSimulatorCustomer();
     }
+    if (loadDraft) {
+      await loadSimulatorDraft(customerId, state.simulator.ticketId);
+    }
+    renderSimulatorCustomer();
   } catch (err) { showToast(err.message, "error"); }
 }
 
 function newSimulatorConversation() {
   const customerId = state.simulator.customerId;
   if (!customerId) return showToast("Select a customer first", "error");
-  resetSimulatorThread(customerId);
+  resetSimulatorThread(customerId, { loadDraft: false });
+  $("#sim-msg-input")?.focus();
+}
+
+function updateSimulatorComposer() {
+  const input = $("#sim-msg-input");
+  const count = $("#sim-char-count");
+  if (!input || !count) return;
+  count.textContent = `${input.value.length} / 1000`;
+  input.style.height = "auto";
+  input.style.height = `${Math.min(Math.max(input.scrollHeight, 74), 150)}px`;
+}
+
+function fillSimulatorPrompt(prompt) {
+  if (!state.simulator.customerId) {
+    showToast("Select a customer first", "error");
+    return;
+  }
+  const input = $("#sim-msg-input");
+  input.value = prompt;
+  updateSimulatorComposer();
+  input.focus();
+}
+
+function setSimulatorSending(isSending) {
+  state.simulator.isSending = isSending;
+  const input = $("#sim-msg-input");
+  const button = $("#sim-send-btn");
+  const label = button?.querySelector(".send-label");
+  const panel = document.querySelector(".customer-panel");
+  if (panel) panel.setAttribute("aria-busy", String(isSending));
+  if (input) input.readOnly = isSending;
+  if (button) {
+    button.disabled = isSending;
+    button.classList.toggle("is-loading", isSending);
+  }
+  if (label) label.textContent = isSending ? "Generating…" : "Send message";
 }
 
 async function sendSimulatorMessage() {
@@ -151,9 +320,10 @@ async function sendSimulatorMessage() {
   const message = input.value.trim();
   if (!state.simulator.customerId) return showToast("Select a customer first", "error");
   if (!message) return showToast("Type a message first", "error");
-  const customer = state.customers.find((item) => item.id === state.simulator.customerId);
+  if (state.simulator.isSending) return;
+
   try {
-    $("#sim-send-btn").disabled = true;
+    setSimulatorSending(true);
     const result = await post("/customer-inquiries/draft-reply", {
       customer_id: state.simulator.customerId,
       message,
@@ -161,57 +331,135 @@ async function sendSimulatorMessage() {
       ticket_id: state.simulator.ticketId || null,
       email_thread_id: state.simulator.threadId || null,
     });
+    const now = new Date().toISOString();
     state.simulator.ticketId = result.draft.ticket_id;
     state.simulator.threadId = state.simulator.threadId || `thread-${state.simulator.ticketId}`;
-    state.simulator.messages.push({ sender: "customer", body: message });
-    state.simulator.draft = result.draft;
-    input.value = "";
-    renderSimulatorCustomer();
+    state.simulator.messages.push({ sender: "customer", body: message, createdAt: now });
     state.simulator.messages.push({
       sender: "system",
-      body: "Your message was received and is waiting for support approval.",
+      body: "AI draft generated · waiting for support approval.",
+      createdAt: now,
     });
+    state.simulator.draft = result.draft;
+    state.simulator.lastResponse = result.agent_response || result.draft.original_ai_draft || "";
+    state.simulator.route = result.route || "";
+    state.simulator.toolName = result.tool_name || "";
+    state.simulator.sources = result.sources || [];
     state.simulator.conversations[state.simulator.threadId] = [...state.simulator.messages];
+    input.value = "";
+    updateSimulatorComposer();
     renderSimulatorCustomer();
-    showToast("Message sent to support for approval");
+    showToast("AI draft generated and ready for review", "success");
   } catch (err) {
     showToast(err.message, "error");
   } finally {
-    $("#sim-send-btn").disabled = false;
+    setSimulatorSending(false);
   }
 }
 
-function renderSimulatorDraft(draft, response, customer) {
-  $("#sim-draft-box").innerHTML = `
+function renderSimulatorDraft() {
+  const draft = state.simulator.draft;
+  const draftBox = $("#sim-draft-box");
+  const draftCount = $("#sim-draft-count");
+  const reviewState = $("#sim-review-state");
+  if (!draftBox) return;
+
+  if (!draft) {
+    if (draftCount) draftCount.textContent = "0 awaiting review";
+    if (reviewState) {
+      reviewState.textContent = "Idle";
+      reviewState.className = "review-state";
+    }
+    draftBox.innerHTML = `
+      <div class="empty-state"><span class="empty-state-icon">✧</span><strong>No response draft yet</strong><span>Send a customer message to generate a reviewable AI reply.</span></div>`;
+    return;
+  }
+
+  const customer = state.customers.find((item) => item.id === state.simulator.customerId);
+  const response = state.simulator.lastResponse || draft.human_edited_version || draft.original_ai_draft || "";
+  const ticketLabel = state.simulator.ticketId || draft.ticket_id || "No ticket";
+  const routeLabel = state.simulator.route ? state.simulator.route.replaceAll("_", " ") : "pending";
+  const sourceCount = state.simulator.sources?.length || 0;
+  if (draftCount) draftCount.textContent = "1 awaiting review";
+  if (reviewState) {
+    reviewState.textContent = "Needs review";
+    reviewState.className = "review-state reviewing";
+  }
+  draftBox.innerHTML = `
     <div class="draft-card">
-      <div class="draft-card-header"><strong>Draft reply for ${escapeHtml(customer?.name || draft.customer_id)}</strong>${badge("human_review")}</div>
-      <p class="draft-inquiry-text">${escapeHtml(response)}</p>
-      <div class="actions">
-        <button class="btn btn-success" onclick="approveSimulatorDraft('${draft.id}')">Approve &amp; Send to Customer</button>
-        <button class="btn btn-danger" onclick="rejectSimulatorDraft('${draft.id}')">Reject</button>
+      <div class="draft-card-header">
+        <strong>Draft reply for ${escapeHtml(customer?.name || draft.customer_id || "customer")}</strong>
+        ${badge("human_review")}
+      </div>
+      <div class="draft-meta-row">
+        <span class="draft-meta-chip">Ticket ${escapeHtml(ticketLabel)}</span>
+        <span class="draft-meta-chip">Route: ${escapeHtml(routeLabel)}</span>
+        ${sourceCount ? `<span class="draft-meta-chip">${sourceCount} source${sourceCount === 1 ? "" : "s"}</span>` : ""}
+      </div>
+      <div class="draft-inquiry-text">${escapeHtml(response)}</div>
+      <textarea id="sim-draft-editor" class="sim-draft-editor" hidden>${escapeHtml(response)}</textarea>
+      <div class="draft-card-actions">
+        <button class="btn btn-secondary" type="button" onclick="toggleSimulatorDraftEditor()">✎ Edit response</button>
+        <button class="btn btn-secondary" type="button" onclick="copySimulatorDraft()">▣ Copy</button>
+        <button class="btn btn-success" type="button" onclick="approveSimulatorDraft('${escapeHtml(draft.id)}')">Approve &amp; send</button>
+        <button class="btn btn-danger" type="button" onclick="rejectSimulatorDraft('${escapeHtml(draft.id)}')">Reject</button>
       </div>
     </div>`;
 }
 
-async function approveSimulatorDraft(draftId) {
+function toggleSimulatorDraftEditor() {
+  const editor = $("#sim-draft-editor");
+  if (!editor) return;
+  editor.hidden = !editor.hidden;
+  if (!editor.hidden) editor.focus();
+}
+
+async function copySimulatorDraft() {
+  const editor = $("#sim-draft-editor");
+  const response = state.simulator.lastResponse || state.simulator.draft?.original_ai_draft || "";
+  const value = editor && !editor.hidden ? editor.value : response;
   try {
-    const result = await post(`/support/email-drafts/${draftId}/approve`, { reviewer: "support-desk" });
-    const body = result.final_sent_message || result.body || "";
-    state.simulator.messages.push({ sender: "agent", body });
+    await navigator.clipboard.writeText(value);
+    showToast("Draft copied to clipboard", "success");
+  } catch {
+    showToast("Clipboard access is unavailable in this browser", "error");
+  }
+}
+
+async function approveSimulatorDraft(draftId) {
+  if (state.simulator.isApproving) return;
+  const editor = $("#sim-draft-editor");
+  const editedBody = editor && !editor.hidden ? editor.value.trim() : null;
+  if (editedBody === "") return showToast("Edited response cannot be empty", "error");
+
+  try {
+    state.simulator.isApproving = true;
+    renderSimulatorDraft();
+    const payload = { reviewer: "support-desk" };
+    if (editedBody !== null) payload.edited_body = editedBody;
+    const result = await post(`/support/email-drafts/${draftId}/approve`, payload);
+    const body = result.final_sent_message || result.body || editedBody || state.simulator.lastResponse;
+    state.simulator.messages.push({ sender: "agent", body, createdAt: new Date().toISOString() });
     state.simulator.draft = null;
-    $("#sim-draft-box").innerHTML = '<div class="empty-state success-text">Approved and sent. The customer can now see this reply.</div>';
+    state.simulator.lastResponse = "";
     renderSimulatorCustomer();
-    showToast("Reply approved and sent to the customer");
+    showToast(editedBody ? "Edited reply approved and sent" : "Reply approved and sent", "success");
     loadDashboard();
-  } catch (err) { showToast(err.message, "error"); }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    state.simulator.isApproving = false;
+    renderSimulatorDraft();
+  }
 }
 
 async function rejectSimulatorDraft(draftId) {
   try {
     await post(`/support/email-drafts/${draftId}/reject`, { reviewer: "support-desk", reason: "Rejected from simulator" });
     state.simulator.draft = null;
-    $("#sim-draft-box").innerHTML = '<div class="empty-state">Draft rejected. Send another customer message to try again.</div>';
-    showToast("Draft rejected");
+    state.simulator.lastResponse = "";
+    renderSimulatorCustomer();
+    showToast("Draft rejected", "info");
   } catch (err) { showToast(err.message, "error"); }
 }
 
@@ -224,10 +472,11 @@ async function pollSimulatorApproval() {
       const sent = sentData.sent_emails?.find((email) => email.ticket_id === state.simulator.ticketId);
       if (sent) {
         state.simulator.messages = state.simulator.messages.filter((message) => message.sender !== "system");
-        state.simulator.messages.push({ sender: "agent", body: sent.body });
+        state.simulator.messages.push({ sender: "agent", body: sent.body, createdAt: sent.created_at });
         state.simulator.draft = null;
+        state.simulator.lastResponse = "";
         renderSimulatorCustomer();
-        showToast("Support approved and sent a reply");
+        showToast("Support approved and sent a reply", "success");
       }
     }
   } catch (err) { console.warn("Simulator approval polling failed", err); }
@@ -797,6 +1046,30 @@ function navigate(view) {
   }
 }
 
+async function refreshSimulator() {
+  const button = $("#sim-refresh-btn");
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Refreshing…";
+    }
+    const data = await get("/customers");
+    state.customers = data.customers;
+    loadSimulatorCustomers();
+    if (state.simulator.customerId) {
+      await resetSimulatorThread(state.simulator.customerId);
+    }
+    showToast("Simulator data refreshed", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "↻ Refresh data";
+    }
+  }
+}
+
 function init() {
   $$(".nav-link").forEach((link) => {
     link.addEventListener("click", (e) => {
@@ -817,12 +1090,18 @@ function init() {
   $("#sim-customer-select").addEventListener("change", (event) => resetSimulatorThread(event.target.value));
   $("#sim-send-btn").addEventListener("click", sendSimulatorMessage);
   $("#sim-new-conversation-btn").addEventListener("click", newSimulatorConversation);
+  $("#sim-refresh-btn").addEventListener("click", refreshSimulator);
+  $("#sim-msg-input").addEventListener("input", updateSimulatorComposer);
+  $$("[data-sim-prompt]").forEach((button) => {
+    button.addEventListener("click", () => fillSimulatorPrompt(button.dataset.simPrompt || ""));
+  });
   $("#sim-msg-input").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendSimulatorMessage();
     }
   });
+  updateSimulatorComposer();
   setInterval(pollSimulatorApproval, 2000);
 
   const hash = window.location.hash.replace("#", "") || "dashboard";

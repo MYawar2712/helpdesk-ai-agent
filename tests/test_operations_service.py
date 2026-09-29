@@ -141,6 +141,18 @@ def test_create_ticket_persists_in_database() -> None:
     assert ticket["customer_id"] == "customer-1"
 
 
+def test_create_ticket_uses_canonical_technical_category() -> None:
+    service = make_service()
+
+    ticket = service.create_ticket(
+        CustomerIdentity("customer-1"),
+        title="AC repair",
+        description="My air conditioner is broken and needs a technician.",
+    )
+
+    assert ticket["category"] == "technical"
+
+
 def test_infer_required_skill_matches_keywords() -> None:
     from services.operations import infer_required_skill
 

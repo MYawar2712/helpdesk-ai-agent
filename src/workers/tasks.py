@@ -32,7 +32,23 @@ def _ensure_processed_status(connection: sqlite3.Connection) -> None:
     definition = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
     ).fetchone()
-    if definition is None or "'processed'" in definition[0]:
+    if definition is None:
+        return
+    if "'processed'" in definition[0]:
+        connection.execute(
+            """
+            UPDATE tickets
+            SET category = CASE lower(trim(category))
+                WHEN 'hardware' THEN 'technical'
+                WHEN 'outage' THEN 'technical'
+                WHEN 'network' THEN 'technical'
+                WHEN 'general_inquiry' THEN 'general'
+                WHEN 'access' THEN 'general'
+                ELSE category
+            END
+            """
+        )
+        connection.commit()
         return
     connection.execute("PRAGMA foreign_keys = OFF")
     connection.execute("ALTER TABLE tickets RENAME TO tickets_legacy")
@@ -42,7 +58,10 @@ def _ensure_processed_status(connection: sqlite3.Connection) -> None:
             customer_id TEXT NOT NULL,
             title TEXT NOT NULL,
             description TEXT NOT NULL,
-            category TEXT NOT NULL,
+            category TEXT NOT NULL CHECK (category IN (
+                'technical', 'billing', 'scheduling', 'warranty',
+                'cancellation', 'general'
+            )),
             priority TEXT NOT NULL CHECK (priority IN (
                 'low', 'medium', 'high', 'urgent'
             )),
@@ -52,6 +71,15 @@ def _ensure_processed_status(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
         );
+        UPDATE tickets_legacy
+        SET category = CASE lower(trim(category))
+            WHEN 'hardware' THEN 'technical'
+            WHEN 'outage' THEN 'technical'
+            WHEN 'network' THEN 'technical'
+            WHEN 'general_inquiry' THEN 'general'
+            WHEN 'access' THEN 'general'
+            ELSE category
+        END;
         INSERT INTO tickets SELECT * FROM tickets_legacy;
         DROP TABLE tickets_legacy;
         CREATE INDEX IF NOT EXISTS idx_tickets_category ON tickets (category);
