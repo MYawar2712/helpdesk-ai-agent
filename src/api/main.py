@@ -25,7 +25,13 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.graph import HelpdeskAgent
 from api.auth import router as auth_router
+from api.customers import router as customers_router
+from api.dashboard import router as dashboard_router
+from api.engineers import router as engineers_router
+from api.invoices import router as invoices_router
+from api.jobs import router as jobs_router
 from api.routes import router
+from api.tickets import router as tickets_router
 from api.users import router as users_router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
@@ -90,6 +96,12 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(dashboard_router)
+app.include_router(tickets_router)
+app.include_router(jobs_router)
+app.include_router(customers_router)
+app.include_router(engineers_router)
+app.include_router(invoices_router)
 
 
 @app.exception_handler(404)

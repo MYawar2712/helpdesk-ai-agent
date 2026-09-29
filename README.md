@@ -373,6 +373,116 @@ pytest tests/test_multi_tenant.py
 
 ---
 
+## Client Dashboard & Management APIs (Day 4)
+
+All Day 4 endpoints require a valid JWT `Authorization: Bearer <token>` header.
+Tenant scope is derived exclusively from the authenticated user's `tenant_id` — no client-supplied tenant ID is trusted.
+
+### Dashboard
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/dashboard/summary` | `tenant:read` | Aggregate metrics: customer count, open tickets, active jobs, pending invoices, available engineers |
+
+**Example response:**
+```json
+{
+  "customers": 42,
+  "open_tickets": 7,
+  "active_jobs": 3,
+  "pending_invoices": 5,
+  "available_engineers": 8
+}
+```
+
+---
+
+### Tickets — `/tickets`
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/tickets` | `ticket:read` | Paginated list with optional `?status=`, `?priority=`, `?intent=`, `?customer_id=`, `?assigned_to=` filters |
+| `GET` | `/tickets/{id}` | `ticket:read` | Get single ticket (tenant + customer isolation enforced) |
+| `POST` | `/tickets` | `ticket:create` | Create ticket; validates `customer_id` and optional `related_job_id` belong to the tenant |
+| `PATCH` | `/tickets/{id}` | `ticket:update` | Update `status`, `priority`, `handled_by`, `resolution`; sets `closed_at` on close/resolve |
+
+---
+
+### Jobs — `/jobs`
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/jobs` | `job:read` | Paginated list with optional `?status=`, `?customer_id=` filters |
+| `GET` | `/jobs/{id}` | `job:read` | Get single job |
+| `POST` | `/jobs` | `job:create` | Create job; validates `customer_id` and `assigned_engineer_id` belong to the tenant |
+| `PATCH` | `/jobs/{id}` | `job:update` | Update fields; enforces state machine transitions (`pending → assigned → in_progress → completed/cancelled`) |
+| `POST` | `/jobs/{id}/assign` | `job:assign` | Assign engineer; validates engineer is within the tenant |
+| `POST` | `/jobs/{id}/cancel` | `job:cancel` | Cancel job; completed jobs cannot be cancelled |
+
+**Valid job status transitions:**
+```
+pending  → assigned, in_progress, cancelled
+assigned → in_progress, completed, cancelled
+in_progress → completed, cancelled
+```
+
+---
+
+### Customers — `/customers`
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/customers` | `customer:read` | Paginated list with optional `?search=` (name/email) |
+| `GET` | `/customers/{id}` | `customer:read` | Get single customer (tenant isolation enforced) |
+| `POST` | `/customers` | `customer:create` | Create customer; rejects duplicate email within tenant (409) |
+| `PATCH` | `/customers/{id}` | `customer:update` | Update `name`, `email`, `phone`; guards against email collisions within tenant |
+
+---
+
+### Engineers — `/engineers`
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/engineers` | `engineer:read` | Paginated list with optional `?status=` (availability) and `?search=` filters |
+| `GET` | `/engineers/{id}` | `engineer:read` | Get single engineer (tenant isolation enforced) |
+| `POST` | `/engineers` | `engineer:create` | Create engineer; validates `availability_status` and rejects duplicate email within tenant |
+| `PATCH` | `/engineers/{id}` | `engineer:update` | Update `name`, `email`, `skills`, `availability_status` |
+
+**Valid availability statuses:** `available`, `busy`, `on_leave`, `offline`
+
+---
+
+### Invoices — `/invoices`
+
+| Method | Path | Permission | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/invoices` | `invoice:read` | Paginated list with optional `?status=`, `?customer_id=`, `?job_id=` filters |
+| `GET` | `/invoices/{id}` | `invoice:read` | Get single invoice (tenant + customer isolation enforced) |
+| `POST` | `/invoices` | `invoice:create` | Create invoice; validates `customer_id` and `job_id` belong to tenant and that the job belongs to the customer |
+| `PATCH` | `/invoices/{id}` | `invoice:update` | Update `amount`, `status`, `due_date`; validates status transition |
+
+**Valid invoice statuses:** `unpaid`, `paid`, `overdue`, `cancelled`
+
+---
+
+### Pagination
+
+All list endpoints return a consistent paginated envelope:
+
+```json
+{
+  "items": [...],
+  "total": 100,
+  "page": 1,
+  "page_size": 20,
+  "pages": 5
+}
+```
+
+Query parameters: `?page=1&page_size=20` (max `page_size` is 100).
+
+---
+
 ## Verification Commands
 
 ```powershell
