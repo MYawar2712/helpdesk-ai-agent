@@ -27,7 +27,7 @@ from agent.graph import HelpdeskAgent
 from api.routes import router
 from clients.nosql_client import NoSQLClient
 from db.data_layer import HelpdeskDataRepository
-from db.seed import initialize_database
+from db.seed import seed_database
 from ml.classifier import TicketClassifier
 from tools.cancel_job import create_cancel_job_tool
 from tools.get_all_invoices import create_get_all_invoices_tool
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize model and repository resources for application lifetime."""
     app.state.classifier = TicketClassifier()
     sql_connection = sqlite3.connect("db/helpdesk.sqlite3", check_same_thread=False)
-    initialize_database(sql_connection)
+    seed_database(sql_connection)
     transcript_connection = sqlite3.connect(
         "db/helpdesk.sqlite3", check_same_thread=False
     )

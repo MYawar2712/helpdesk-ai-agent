@@ -147,8 +147,10 @@ ruff format --check .
 Day 8 adds a local scikit-learn triage pipeline in `src/ml/`. It trains separate
 TF-IDF plus logistic-regression models for ticket category and priority, using
 the SQLite tickets when available and a deterministic synthetic corpus when the
-database is small. Database `network` and `access` labels are mapped to the
-current `outage` and `general_inquiry` categories.
+database is small. All classifiers use the canonical categories `technical`,
+`billing`, `scheduling`, `warranty`, `cancellation`, and `general`; legacy
+hardware, outage, network, access, and general-inquiry labels are migrated to
+those values when old data is read.
 
 Train and save the artifact with:
 
@@ -160,9 +162,9 @@ The output is `models/ticket_classifier.joblib`. `TicketClassifier.predict()`
 returns category, priority, a probability-based confidence score, and sets
 `requires_llm_review` when the lower of the two model confidences is below
 `0.60`. Accuracy and weighted F1, plus a classification report, are printed for
-both targets during training. The local baseline should normally exceed 0.80
-on the included synthetic holdout; production acceptance should also include
-an independently labelled validation set and calibration checks.
+both targets during training. Treat the included synthetic holdout as a
+reproducible smoke-test benchmark; production acceptance should include an
+independently labelled validation set and calibration checks.
 
 Run the ML tests with:
 
@@ -183,8 +185,9 @@ Active triggers are:
 - Overdue invoices above `$1,000` or `URGENT` priority: `vip_priority_queue`.
 - `refund`, `chargeback`, `legal`, or `overcharge`: `billing_specialists` and
   human handoff.
-- Otherwise, category queues route billing, outage, hardware, and general
-  inquiry tickets to their standard support queues.
+- Otherwise, category queues route `technical`, `billing`, `scheduling`,
+  `warranty`, `cancellation`, and `general` tickets to their standard support
+  queues.
 
 Financial disputes take queue precedence over VIP and manual-review routing so
 that billing specialists receive the case directly; all matching conditions
@@ -288,12 +291,61 @@ Exposes `POST /chat` and `GET /` endpoints, integrating LangGraph agent routing,
 
 `src/guardrails/` applies deterministic PII redaction, prompt-injection detection, refusal handling, and output checks around `HelpdeskAgent.invoke` without replacing authorization or rewriting the LangGraph. Adversarial cases live in `eval/adversarial_cases.csv` and run through `eval/run_langsmith_eval.py`.
 
+## Multi-Tenant Database Architecture (Day 1)
+
+### Overview
+Extends the helpdesk platform to support isolated multi-tenant client companies. Every tenant-owned record is bound to a mandatory `tenant_id`, and tenant data isolation is enforced strictly at the database and service layer (`TenantDataService`).
+
+### Model Relationships
+- **Tenant**: Root entity representing a client company (`id`, `name`, `slug`, `is_active`, timestamps).
+- **User**: User accounts (`tenant_id` nullable only for platform super-admins).
+- **Customer**: Tenant customer profiles (`tenant_id`, `name`, `email`, `phone`).
+- **Engineer**: Field technicians (`tenant_id`, `name`, `email`, `skills` JSON, `availability_status`).
+- **Job**: Work orders (`tenant_id`, `customer_id`, `assigned_engineer_id`, status, priority).
+- **Ticket**: Support requests (`tenant_id`, `customer_id`, `related_job_id`, intent, status, priority).
+- **Invoice**: Billing records (`tenant_id`, `customer_id`, `job_id`, amount, status, due_date).
+- **Conversation**: Email/chat thread (`tenant_id`, `customer_id`, `ticket_id`, status).
+- **Message**: Individual exchange inside a conversation (`tenant_id`, `conversation_id`, `sender_type`, content).
+- **AIConfiguration**: Tenant customization (`tenant_id`, `global_instructions`, `tone`, rules JSON).
+- **KnowledgeDocument**: Tenant RAG document metadata (`tenant_id`, `name`, `file_path`, status).
+- **AuditLog**: Audit entries tracking tenant operations and security events.
+
+### Tenant Isolation Approach
+- All queries filtered by `tenant_id` at the SQL / ORM level.
+- Cross-tenant record linking (e.g. associating Tenant B's job with Tenant A's ticket) is blocked by validation checks in `TenantDataService`.
+- Authorization checks occur in the data access layer independently of LLM prompt instructions or client-provided parameters.
+
+### PostgreSQL & Environment Setup
+Set the PostgreSQL connection URL environment variable:
+```bash
+export DATABASE_URL="postgresql://username:password@localhost:5432/helpdesk_db"
+```
+
+### Alembic Migration Commands
+Run migrations to apply schema updates:
+```powershell
+# Apply all pending migrations to PostgreSQL / target database
+alembic upgrade head
+
+# Generate a new migration script when ORM models change
+alembic revision --autogenerate -m "description_of_change"
+
+# Rollback last migration step
+alembic downgrade -1
+```
+
+### Testing Instructions
+Run multi-tenant model and isolation tests:
+```powershell
+pytest tests/test_multi_tenant.py
+```
+
 ---
 
 ## Verification Commands
 
 ```powershell
 pytest
-.venv\Scripts\ruff check .
-.venv\Scripts\ruff format --check .
+ruff check .
+ruff format .
 ```

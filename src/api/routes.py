@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import FileResponse
 
 from agent.graph import HelpdeskAgent
 from api.schemas import (
@@ -54,6 +56,13 @@ def _extract_sources(result: dict[str, Any]) -> list[str]:
         elif "source" in tool_result:
             sources = [str(tool_result["source"])]
     return sources
+
+
+@router.get("/dashboard")
+async def dashboard() -> FileResponse:
+    """Serve the dashboard HTML user interface."""
+    html_path = Path(__file__).resolve().parents[2] / "static" / "index.html"
+    return FileResponse(html_path)
 
 
 @router.get("/")
@@ -392,35 +401,12 @@ async def draft_customer_inquiry_reply(
             re.IGNORECASE,
         )
         target_job_id = target_job_match.group(1).strip() if target_job_match else None
-        cancelled_jobs = (
-            _operations(request).cancel_customer_scheduled_jobs(
-                payload.customer_id, job_id=target_job_id
-            )
-            if target_job_id
-            else []
-        )
-        if cancelled_jobs:
-            job_ids_str = ", ".join(j["id"] for j in cancelled_jobs)
+        if not target_job_id:
             job_context_str = (
-                f"Action taken: Successfully cancelled job(s) "
-                f"[{job_ids_str}] in the database for customer "
-                f"{payload.customer_id}. Please confirm the "
-                f"cancellation to the customer."
+                "No cancellation action has been taken yet. The customer asked to "
+                "cancel a job but did not provide a job ID. Ask which job ID "
+                "they want to cancel and show their active job IDs if available."
             )
-        else:
-            if target_job_id:
-                job_context_str = (
-                    f"Action taken: Customer requested cancellation "
-                    f"for specific job '{target_job_id}', but no active "
-                    f"matching job belonging to customer "
-                    f"{payload.customer_id} was found."
-                )
-            else:
-                job_context_str = (
-                    "No cancellation action has been taken. The customer asked to "
-                    "cancel a job but did not provide a job ID. Ask which job ID "
-                    "they want to cancel and show their active job IDs if available."
-                )
 
     result: dict[str, Any] = {
         "route": "handoff",

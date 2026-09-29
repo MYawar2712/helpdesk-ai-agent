@@ -82,12 +82,32 @@ def test_general_inquiry_creates_ticket_not_job() -> None:
         service, TicketIntent.GENERAL_INQUIRY, "What are your opening hours?"
     )
 
-    _draft_approve_send(service, ticket)
+    _ = _draft_approve_send(service, ticket)
 
     final = _fetch_ticket(service, ticket["id"])
     assert _count_jobs(service) == before
     assert final["job_id"] is None
     assert final["related_job_id"] is None
+
+
+def test_non_job_reply_does_not_repeat_an_existing_job_id() -> None:
+    service = make_service()
+    existing_job = service.create_job(
+        CustomerIdentity("customer-1"),
+        title="AC repair",
+        description="Existing AC repair appointment.",
+        required_skill="HVAC",
+        service_area="London",
+    )
+    ticket = _create_ticket(
+        service,
+        TicketIntent.BILLING_INQUIRY,
+        "I was charged twice for my invoice.",
+    )
+
+    sent = _draft_approve_send(service, ticket)
+
+    assert existing_job["id"] not in sent["final_sent_message"]
 
 
 def test_job_status_creates_ticket_not_job() -> None:
@@ -97,7 +117,7 @@ def test_job_status_creates_ticket_not_job() -> None:
         service, TicketIntent.JOB_STATUS, "What's the status of job-6?"
     )
 
-    _draft_approve_send(service, ticket)
+    _ = _draft_approve_send(service, ticket)
 
     final = _fetch_ticket(service, ticket["id"])
     assert _count_jobs(service) == before
@@ -201,12 +221,13 @@ def test_new_service_request_creates_ticket_and_job() -> None:
         "My boiler is broken, please book an engineer",
     )
 
-    _draft_approve_send(service, ticket)
+    sent = _draft_approve_send(service, ticket)
 
     final = _fetch_ticket(service, ticket["id"])
     assert _count_jobs(service) == before + 1
     assert final["job_id"] is not None
     assert final["related_job_id"] == final["job_id"]
+    assert final["job_id"] in sent["final_sent_message"]
 
 
 def test_new_service_request_links_ticket_related_job_id() -> None:

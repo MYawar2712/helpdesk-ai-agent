@@ -156,7 +156,9 @@ def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
     mock_agent.invoke.assert_called_once_with(
         "Customer ID: customer-1\n"
         "Ticket ID: ticket-1\n"
-        "Message: Hi, can you help me understand your opening hours?"
+        "Message: Hi, can you help me understand your opening hours?",
+        customer_id="customer-1",
+        email_thread_id="thread-ticket-1",
     )
 
 

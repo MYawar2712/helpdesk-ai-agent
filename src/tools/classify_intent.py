@@ -91,9 +91,11 @@ _RULES: list[tuple[TicketIntent, re.Pattern[str]]] = [
         TicketIntent.NEW_SERVICE_REQUEST,
         re.compile(
             r"\b(broken|not working|fix|repair|job lock|"
-            r"(need|send|book|schedule|make|arrange|get|request|organize|"
+            r"(need|send|book|schedule|make|make me|arrange|get|request|organize|"
             r"set up) (a |an )?"
-            r"(engineer|technician|plumber|electrician|hvac|repair|inspection|visit|service|appointment|someone)|"
+            r"(engineer|technician|plumber|electrician|hvac|repair|"
+            r"inspection|visit|service|service visit|appointment|someone)|"
+            r"service visit|"
             r"(engineer|technician|plumber|electrician|hvac) (to visit|visit|needed)|"
             r"leaking|leak|burst (pipe|boiler|tank)|"
             r"no (hot water|heating|power|electricity)|"
