@@ -93,17 +93,17 @@ def verify_tenant_access(current_user: User, resource_tenant_id: str | None) -> 
 def verify_customer_access(current_user: User, resource_customer_id: str) -> None:
     """Verify customer isolation rules.
 
-    If current_user is a CUSTOMER role, they can ONLY access resources where
-    customer_id matches their own associated customer account.
+    A ``CUSTOMER`` may only ever reach resources that belong to their own
+    customer record. When the account is *not* linked to a customer the check
+    fails closed: previously an unlinked customer skipped the comparison
+    entirely and could read any customer's data.
     """
-    if (current_user.role or "").upper() == Role.CUSTOMER.value:
-        # In a customer user context, user's customer reference must match
-        # We also check email matching if explicit customer_id link is checked
-        if (
-            getattr(current_user, "customer_id", None)
-            and current_user.customer_id != resource_customer_id
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access to another customer's data is forbidden.",
-            )
+    if (current_user.role or "").upper() != Role.CUSTOMER.value:
+        return
+
+    own_customer_id = getattr(current_user, "customer_id", None)
+    if not own_customer_id or own_customer_id != resource_customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to another customer's data is forbidden.",
+        )

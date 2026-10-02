@@ -61,12 +61,25 @@ class Permission(StrEnum):
     AI_CONFIG_READ = "ai_config:read"
     AI_CONFIG_UPDATE = "ai_config:update"
 
+    # Tenant knowledge base
+    KNOWLEDGE_READ = "knowledge:read"
+    KNOWLEDGE_WRITE = "knowledge:write"
+
     # Agent execution
     AGENT_CONFIGURE = "agent:configure"
     AGENT_EXECUTE = "agent:execute"
 
+    # Human-in-the-loop approvals
+    APPROVAL_READ = "approval:read"
+    APPROVAL_DECIDE = "approval:decide"
+
     # Audit Log
     AUDIT_LOG_READ = "audit_log:read"
+
+    # Conversation management
+    CONVERSATION_CREATE = "conversation:create"
+    CONVERSATION_READ = "conversation:read"
+    MESSAGE_CREATE = "message:create"
 
 
 # Centralized Role -> Permission mapping
@@ -100,8 +113,12 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         Permission.ENGINEER_ASSIGN.value,
         Permission.AI_CONFIG_READ.value,
         Permission.AI_CONFIG_UPDATE.value,
+        Permission.KNOWLEDGE_READ.value,
+        Permission.KNOWLEDGE_WRITE.value,
         Permission.AGENT_CONFIGURE.value,
         Permission.AGENT_EXECUTE.value,
+        Permission.APPROVAL_READ.value,
+        Permission.APPROVAL_DECIDE.value,
         Permission.AUDIT_LOG_READ.value,
     },
     Role.SUPPORT_AGENT.value: {
@@ -120,6 +137,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         Permission.INVOICE_READ.value,
         Permission.ENGINEER_READ.value,
         Permission.AGENT_EXECUTE.value,
+        Permission.APPROVAL_READ.value,
+        Permission.APPROVAL_DECIDE.value,
     },
     Role.AI_AGENT.value: {
         Permission.TICKET_READ.value,
@@ -139,6 +158,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         Permission.JOB_CREATE.value,
         Permission.JOB_CANCEL.value,
         Permission.INVOICE_READ.value,
+        Permission.CONVERSATION_CREATE.value,
+        Permission.CONVERSATION_READ.value,
+        Permission.MESSAGE_CREATE.value,
     },
 }
 

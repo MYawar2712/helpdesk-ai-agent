@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 
 from clients.nosql_client import NoSQLClient
+from db.sqlite_guard import serialize_connection
 from llm.structured_extract import TicketClassification
 
 
@@ -15,7 +16,10 @@ class HelpdeskDataRepository:
     def __init__(
         self, sql_connection: sqlite3.Connection, nosql_client: NoSQLClient
     ) -> None:
-        self.sql_connection = sql_connection
+        # The connection is shared by every request thread, so it is wrapped in
+        # a serialising proxy. ``sql_connection`` stays the single access point
+        # for callers, so no other module has to change.
+        self.sql_connection = serialize_connection(sql_connection)
         self.nosql_client = nosql_client
         self.sql_connection.row_factory = sqlite3.Row
 

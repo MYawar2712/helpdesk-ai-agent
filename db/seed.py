@@ -165,9 +165,16 @@ def initialize_database(connection: sqlite3.Connection) -> None:
 
 
 def seed_database(connection: sqlite3.Connection) -> None:
-    """Replace existing rows with deterministic relational sample data."""
+    """Seed relational sample data only when the database is empty.
+
+    Seeding must never delete tenant-owned customers, engineers, jobs, or
+    conversations when the API process restarts.
+    """
 
     initialize_database(connection)
+    if connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0] > 0:
+        return
+
     connection.execute("DELETE FROM conversation_messages")
     connection.execute("DELETE FROM conversation_threads")
     connection.execute("DELETE FROM sent_emails")

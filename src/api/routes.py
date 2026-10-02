@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ from api.schemas import (
 from auth.dependencies import (
     require_permission,
 )
-from auth.rbac import Permission
+from auth.rbac import Permission, Role
 from db.models import User
 from rules.escalation_engine import EscalationEngine
 from services.operations import (
@@ -44,9 +45,53 @@ from workers.tasks import process_ticket_async
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
+
 _RequireTicketRead = Depends(require_permission(Permission.TICKET_READ.value))
 _RequireJobRead = Depends(require_permission(Permission.JOB_READ.value))
 _RequireCustomerRead = Depends(require_permission(Permission.CUSTOMER_READ.value))
+_RequireTicketCreate = Depends(require_permission(Permission.TICKET_CREATE.value))
+_RequireTicketUpdate = Depends(require_permission(Permission.TICKET_UPDATE.value))
+_RequireJobCreate = Depends(require_permission(Permission.JOB_CREATE.value))
+_RequireJobUpdate = Depends(require_permission(Permission.JOB_UPDATE.value))
+_RequireJobAssign = Depends(require_permission(Permission.JOB_ASSIGN.value))
+_RequireAgentExecute = Depends(require_permission(Permission.AGENT_EXECUTE.value))
+_RequireConversationRead = Depends(
+    require_permission(Permission.CONVERSATION_READ.value)
+)
+
+
+def _resolve_customer_id(current_user: User, requested: str | None) -> str:
+    """Return the customer id a request is allowed to act on.
+
+    Legacy payloads carry ``customer_id`` in the body. Trusting it would let any
+    authenticated caller act as a different customer, because the authorization
+    layer downstream validates against whatever id it is handed. For a
+    ``CUSTOMER`` the id therefore comes from the authenticated account and a
+    mismatching body value is rejected. Staff roles legitimately act on behalf
+    of a customer, so their requested id is used.
+    """
+
+    if (current_user.role or "").upper() == Role.CUSTOMER.value:
+        own_id = getattr(current_user, "customer_id", None)
+        if not own_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is not linked to a customer record.",
+            )
+        if requested and requested != own_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot act on behalf of another customer.",
+            )
+        return own_id
+
+    if not requested:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="customer_id is required.",
+        )
+    return requested
 
 
 def _extract_sources(result: dict[str, Any]) -> list[str]:
@@ -85,7 +130,11 @@ async def root() -> dict[str, str]:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
+async def chat(
+    payload: ChatRequest,
+    request: Request,
+    current_user: User = _RequireAgentExecute,
+) -> ChatResponse:
     """Process a support question asynchronously via the LangGraph agent."""
     if not payload.message.strip():
         raise HTTPException(
@@ -100,9 +149,13 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     try:
         result = await asyncio.to_thread(agent.invoke, payload.message)
     except Exception as err:
+        # The underlying error may contain connection strings, prompts, or
+        # stack detail, so the client gets a generic message and the detail
+        # stays in the server log.
+        logger.exception("Agent execution failed on POST /chat")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Agent execution failed: {err}",
+            detail="The assistant could not process this request.",
         ) from err
 
     response_text = result.get("final_response") or result.get("response") or ""
@@ -122,7 +175,10 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
 
 
 @router.post("/api/v1/tickets/{ticket_id}/process-async", status_code=202)
-async def process_ticket(ticket_id: str) -> dict[str, str]:
+async def process_ticket(
+    ticket_id: str,
+    current_user: User = _RequireTicketUpdate,
+) -> dict[str, str]:
     """Queue asynchronous classification and escalation processing."""
     task = process_ticket_async.delay(ticket_id)
     return {"task_id": task.id, "status": "queued"}
@@ -189,8 +245,13 @@ async def list_email_drafts(
 
 
 @router.get("/api/v1/simulator/conversations")
-async def simulator_conversations(customer_id: str, request: Request) -> dict[str, Any]:
+async def simulator_conversations(
+    customer_id: str,
+    request: Request,
+    current_user: User = _RequireConversationRead,
+) -> dict[str, Any]:
     """Return stored simulator conversations for a customer."""
+    customer_id = _resolve_customer_id(current_user, customer_id)
     conv_repo = getattr(request.app.state, "conv_repository", None)
     if conv_repo is None:
         raise HTTPException(
@@ -221,8 +282,13 @@ async def simulator_conversations(customer_id: str, request: Request) -> dict[st
 
 
 @router.get("/api/v1/support/sent-emails")
-async def list_sent_emails(customer_id: str, request: Request) -> dict[str, Any]:
+async def list_sent_emails(
+    customer_id: str,
+    request: Request,
+    current_user: User = _RequireTicketRead,
+) -> dict[str, Any]:
     """Return sent customer replies for simulator synchronization."""
+    customer_id = _resolve_customer_id(current_user, customer_id)
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Repository not ready")
@@ -236,7 +302,9 @@ async def list_sent_emails(customer_id: str, request: Request) -> dict[str, Any]
 
 @router.post("/api/v1/tickets/classify", response_model=TicketClassificationResponse)
 async def classify_ticket(
-    payload: TicketIntakeRequest, request: Request
+    payload: TicketIntakeRequest,
+    request: Request,
+    current_user: User = _RequireTicketCreate,
 ) -> TicketClassificationResponse:
     """Classify and route a newly submitted ticket."""
     classifier = getattr(request.app.state, "classifier", None)
@@ -263,7 +331,11 @@ async def classify_ticket(
 
 
 @router.get("/api/v1/tickets/{ticket_id}/context")
-async def ticket_context(ticket_id: str, request: Request) -> dict[str, Any]:
+async def ticket_context(
+    ticket_id: str,
+    request: Request,
+    current_user: User = _RequireTicketRead,
+) -> dict[str, Any]:
     """Return the complete SQL and transcript context for a ticket."""
     repository = getattr(request.app.state, "repository", None)
     if repository is None:
@@ -292,11 +364,17 @@ def _handle_operation_error(err: Exception) -> None:
 
 
 @router.post("/api/v1/jobs", status_code=201)
-async def create_job(payload: JobCreateRequest, request: Request) -> dict[str, Any]:
+async def create_job(
+    payload: JobCreateRequest,
+    request: Request,
+    current_user: User = _RequireJobCreate,
+) -> dict[str, Any]:
     """Create a job for an authenticated customer."""
     try:
         return _operations(request).create_job(
-            CustomerIdentity(customer_id=payload.customer_id),
+            CustomerIdentity(
+                customer_id=_resolve_customer_id(current_user, payload.customer_id)
+            ),
             title=payload.title,
             description=payload.description,
             required_skill=payload.required_skill,
@@ -311,12 +389,17 @@ async def create_job(payload: JobCreateRequest, request: Request) -> dict[str, A
 
 @router.post("/api/v1/tickets/{ticket_id}/create-job", status_code=201)
 async def create_job_for_ticket(
-    ticket_id: str, payload: TicketJobCreateRequest, request: Request
+    ticket_id: str,
+    payload: TicketJobCreateRequest,
+    request: Request,
+    current_user: User = _RequireJobCreate,
 ) -> dict[str, Any]:
     """Create a job for a customer ticket, auto-assign an engineer, or escalate."""
     try:
         return _operations(request).create_job_for_ticket(
-            CustomerIdentity(customer_id=payload.customer_id),
+            CustomerIdentity(
+                customer_id=_resolve_customer_id(current_user, payload.customer_id)
+            ),
             ticket_id=ticket_id,
             title=payload.title,
             description=payload.description,
@@ -332,12 +415,18 @@ async def create_job_for_ticket(
 
 @router.post("/api/v1/jobs/{job_id}/lock")
 async def lock_job(
-    job_id: str, payload: JobLockRequest, request: Request
+    job_id: str,
+    payload: JobLockRequest,
+    request: Request,
+    current_user: User = _RequireJobUpdate,
 ) -> dict[str, Any]:
     """Lock a customer-owned job in a validated backend operation."""
     try:
         return _operations(request).lock_job(
-            CustomerIdentity(customer_id=payload.customer_id), job_id=job_id
+            CustomerIdentity(
+                customer_id=_resolve_customer_id(current_user, payload.customer_id)
+            ),
+            job_id=job_id,
         )
     except Exception as err:
         _handle_operation_error(err)
@@ -346,7 +435,10 @@ async def lock_job(
 
 @router.post("/api/v1/support/jobs/{job_id}/assign-engineer")
 async def assign_engineer(
-    job_id: str, payload: EngineerAssignmentRequest, request: Request
+    job_id: str,
+    payload: EngineerAssignmentRequest,
+    request: Request,
+    current_user: User = _RequireJobAssign,
 ) -> dict[str, Any]:
     """Assign an eligible engineer through a human support operation."""
     try:
@@ -362,13 +454,15 @@ async def assign_engineer(
 
 @router.post("/api/v1/support/email-drafts", status_code=201)
 async def create_email_draft(
-    payload: EmailDraftCreateRequest, request: Request
+    payload: EmailDraftCreateRequest,
+    request: Request,
+    current_user: User = _RequireTicketUpdate,
 ) -> dict[str, Any]:
     """Create an AI email draft that must be reviewed by a human."""
     try:
         return _operations(request).create_email_draft(
             ticket_id=payload.ticket_id,
-            customer_id=payload.customer_id,
+            customer_id=_resolve_customer_id(current_user, payload.customer_id),
             ai_draft=payload.ai_draft,
         )
     except Exception as err:
@@ -382,7 +476,9 @@ async def create_email_draft(
     status_code=201,
 )
 async def draft_customer_inquiry_reply(
-    payload: CustomerInquiryDraftRequest, request: Request
+    payload: CustomerInquiryDraftRequest,
+    request: Request,
+    current_user: User = _RequireAgentExecute,
 ) -> CustomerInquiryDraftResponse:
     """Generate an AI draft reply and store it for human review."""
     if not payload.message.strip():
@@ -391,6 +487,7 @@ async def draft_customer_inquiry_reply(
             detail="Message cannot be empty or whitespace only",
         )
 
+    customer_id = _resolve_customer_id(current_user, payload.customer_id)
     agent = getattr(request.app.state, "agent", None)
     if agent is None:
         agent = HelpdeskAgent()
@@ -402,7 +499,7 @@ async def draft_customer_inquiry_reply(
         )
         try:
             new_ticket = _operations(request).create_ticket(
-                CustomerIdentity(customer_id=payload.customer_id),
+                CustomerIdentity(customer_id=customer_id),
                 title=title,
                 description=payload.message,
             )
@@ -434,7 +531,7 @@ async def draft_customer_inquiry_reply(
         "tool_result": {},
     }
     context_parts: list[str] = [
-        f"Customer ID: {payload.customer_id}",
+        f"Customer ID: {customer_id}",
         f"Ticket ID: {ticket_id}",
         f"Message: {payload.message}",
     ]
@@ -449,7 +546,7 @@ async def draft_customer_inquiry_reply(
         result = await asyncio.to_thread(
             agent.invoke,
             prompt,
-            customer_id=payload.customer_id,
+            customer_id=customer_id,
             email_thread_id=thread_key,
         )
         response_text = result.get("final_response") or result.get("response") or ""
@@ -468,7 +565,7 @@ async def draft_customer_inquiry_reply(
     try:
         draft = _operations(request).create_email_draft(
             ticket_id=ticket_id,
-            customer_id=payload.customer_id,
+            customer_id=customer_id,
             ai_draft=response_text,
         )
     except Exception as err:
@@ -486,7 +583,10 @@ async def draft_customer_inquiry_reply(
 
 @router.post("/api/v1/support/email-drafts/{draft_id}/approve")
 async def approve_email_draft(
-    draft_id: str, payload: EmailDraftApprovalRequest, request: Request
+    draft_id: str,
+    payload: EmailDraftApprovalRequest,
+    request: Request,
+    current_user: User = _RequireTicketUpdate,
 ) -> dict[str, Any]:
     """Approve an AI email draft after human review and automatically send it."""
     try:
@@ -505,7 +605,10 @@ async def approve_email_draft(
 
 @router.post("/api/v1/support/email-drafts/{draft_id}/reject")
 async def reject_email_draft(
-    draft_id: str, payload: EmailDraftRejectionRequest, request: Request
+    draft_id: str,
+    payload: EmailDraftRejectionRequest,
+    request: Request,
+    current_user: User = _RequireTicketUpdate,
 ) -> dict[str, Any]:
     """Reject an AI email draft and keep it from being sent."""
     try:
@@ -519,7 +622,10 @@ async def reject_email_draft(
 
 @router.post("/api/v1/support/email-drafts/{draft_id}/send")
 async def send_email_draft(
-    draft_id: str, payload: EmailDraftSendRequest, request: Request
+    draft_id: str,
+    payload: EmailDraftSendRequest,
+    request: Request,
+    current_user: User = _RequireTicketUpdate,
 ) -> dict[str, Any]:
     """Send only an approved email draft."""
     try:

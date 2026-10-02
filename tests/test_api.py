@@ -27,9 +27,9 @@ def test_health_endpoint() -> None:
     assert response.json()["models_loaded"] is True
 
 
-def test_classify_ticket_returns_routing_response() -> None:
+def test_classify_ticket_returns_routing_response(legacy_client, auth_headers) -> None:
     """Test POST /api/v1/tickets/classify returns ML and routing decisions."""
-    with TestClient(app) as client:
+    with legacy_client as client:
         response = client.post(
             "/api/v1/tickets/classify",
             json={
@@ -37,6 +37,7 @@ def test_classify_ticket_returns_routing_response() -> None:
                 "description": "All sites are unavailable",
                 "customer_id": "customer-1",
             },
+            headers=auth_headers,
         )
     assert response.status_code == 200
     body = response.json()
@@ -48,22 +49,26 @@ def test_classify_ticket_returns_routing_response() -> None:
     assert isinstance(body["reasons"], list)
 
 
-def test_ticket_context_returns_seeded_ticket() -> None:
+def test_ticket_context_returns_seeded_ticket(legacy_client, auth_headers) -> None:
     """Test GET /api/v1/tickets/{id}/context returns seeded data."""
-    with TestClient(app) as client:
-        response = client.get("/api/v1/tickets/ticket-1/context")
+    with legacy_client as client:
+        response = client.get("/api/v1/tickets/ticket-1/context", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["ticket"]["id"] == "ticket-1"
 
 
-def test_ticket_context_returns_404_for_unknown_ticket() -> None:
+def test_ticket_context_returns_404_for_unknown_ticket(
+    legacy_client, auth_headers
+) -> None:
     """Test GET /api/v1/tickets/{id}/context returns 404 when ticket is missing."""
-    with TestClient(app) as client:
-        response = client.get("/api/v1/tickets/does-not-exist/context")
+    with legacy_client as client:
+        response = client.get(
+            "/api/v1/tickets/does-not-exist/context", headers=auth_headers
+        )
     assert response.status_code == 404
 
 
-def test_chat_endpoint_successful_response() -> None:
+def test_chat_endpoint_successful_response(legacy_client, auth_headers) -> None:
     """Test POST /chat returns a valid response with mocked agent."""
     mock_agent = MagicMock()
     mock_agent.invoke.return_value = {
@@ -74,11 +79,12 @@ def test_chat_endpoint_successful_response() -> None:
         "tool_result": {},
     }
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/chat",
             json={"message": "What is the warranty policy for AC repairs?"},
+            headers=auth_headers,
         )
 
     assert response.status_code == 200
@@ -93,39 +99,42 @@ def test_chat_endpoint_successful_response() -> None:
     )
 
 
-def test_chat_endpoint_missing_or_invalid_message() -> None:
+def test_chat_endpoint_missing_or_invalid_message(legacy_client, auth_headers) -> None:
     """Test POST /chat returns 422 for missing or empty message payload."""
-    with TestClient(app) as client:
+    with legacy_client as client:
         # Missing message key
-        response1 = client.post("/chat", json={})
+        response1 = client.post("/chat", json={}, headers=auth_headers)
         assert response1.status_code == 422
 
         # Empty string message
-        response2 = client.post("/chat", json={"message": ""})
+        response2 = client.post("/chat", json={"message": ""}, headers=auth_headers)
         assert response2.status_code == 422
 
         # Whitespace-only string message
-        response3 = client.post("/chat", json={"message": "   "})
+        response3 = client.post("/chat", json={"message": "   "}, headers=auth_headers)
         assert response3.status_code == 422
 
 
-def test_chat_endpoint_agent_failure() -> None:
+def test_chat_endpoint_agent_failure(legacy_client, auth_headers) -> None:
     """Test POST /chat returns 500 when agent execution fails."""
     mock_agent = MagicMock()
     mock_agent.invoke.side_effect = RuntimeError("LLM connection timeout")
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/chat",
             json={"message": "Help with my boiler!"},
+            headers=auth_headers,
         )
 
     assert response.status_code == 500
     assert "detail" in response.json()
 
 
-def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
+def test_customer_inquiry_creates_reviewable_ai_draft(
+    legacy_client, auth_headers
+) -> None:
     """Customer inquiry drafts an AI reply but leaves it awaiting review."""
     mock_agent = MagicMock()
     mock_agent.invoke.return_value = {
@@ -136,7 +145,7 @@ def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
         "tool_result": {},
     }
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/api/v1/customer-inquiries/draft-reply",
@@ -145,6 +154,7 @@ def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
                 "customer_id": "customer-1",
                 "message": "Hi, can you help me understand your opening hours?",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -162,12 +172,14 @@ def test_customer_inquiry_creates_reviewable_ai_draft() -> None:
     )
 
 
-def test_customer_inquiry_agent_failure_creates_reviewable_handoff_draft() -> None:
+def test_customer_inquiry_agent_failure_creates_reviewable_handoff_draft(
+    legacy_client, auth_headers
+) -> None:
     """Agent failures become reviewable drafts instead of raw 500s."""
     mock_agent = MagicMock()
     mock_agent.invoke.side_effect = RuntimeError("LLM unavailable")
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/api/v1/customer-inquiries/draft-reply",
@@ -176,6 +188,7 @@ def test_customer_inquiry_agent_failure_creates_reviewable_handoff_draft() -> No
                 "customer_id": "customer-1",
                 "message": "can u tell me your business hours",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -185,7 +198,9 @@ def test_customer_inquiry_agent_failure_creates_reviewable_handoff_draft() -> No
     assert "human support" in body["agent_response"]
 
 
-def test_customer_inquiry_without_ticket_id_creates_new_ticket() -> None:
+def test_customer_inquiry_without_ticket_id_creates_new_ticket(
+    legacy_client, auth_headers
+) -> None:
     """When ticket_id is omitted, draft-reply creates a brand new ticket in SQLite."""
     mock_agent = MagicMock()
     mock_agent.invoke.return_value = {
@@ -193,7 +208,7 @@ def test_customer_inquiry_without_ticket_id_creates_new_ticket() -> None:
         "route": "respond",
     }
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/api/v1/customer-inquiries/draft-reply",
@@ -201,6 +216,7 @@ def test_customer_inquiry_without_ticket_id_creates_new_ticket() -> None:
                 "customer_id": "customer-1",
                 "message": "I need help with my new subscription",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -211,7 +227,9 @@ def test_customer_inquiry_without_ticket_id_creates_new_ticket() -> None:
     assert body["agent_response"] == "Here is information on your inquiry."
 
 
-def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> None:
+def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer(
+    legacy_client, auth_headers
+) -> None:
     """Customer inquiry with scheduling intent creates job immediately and returns
     confirmation."""
     mock_agent = MagicMock()
@@ -220,7 +238,7 @@ def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> N
         "route": "respond",
     }
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/api/v1/customer-inquiries/draft-reply",
@@ -231,6 +249,7 @@ def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> N
                     "monday at 9 am"
                 ),
             },
+            headers=auth_headers,
         )
 
         assert response.status_code == 201
@@ -241,9 +260,9 @@ def test_customer_inquiry_repair_request_creates_job_and_assigns_engineer() -> N
         mock_agent.invoke.assert_called_once()
 
 
-def test_create_job_for_ticket_api_endpoint() -> None:
+def test_create_job_for_ticket_api_endpoint(legacy_client, auth_headers) -> None:
     """POST /api/v1/tickets/{ticket_id}/create-job creates job and assigns engineer."""
-    with TestClient(app) as client:
+    with legacy_client as client:
         response = client.post(
             "/api/v1/tickets/ticket-1/create-job",
             json={
@@ -254,6 +273,7 @@ def test_create_job_for_ticket_api_endpoint() -> None:
                 "service_area": "London",
                 "priority": "high",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 201

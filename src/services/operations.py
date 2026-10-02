@@ -6,12 +6,14 @@ import json
 import random
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
 from models import (
     HandledBy,
+    InvoiceStatus,
     TicketIntent,
     TicketStatus,
     normalize_ticket_category,
@@ -22,6 +24,15 @@ _ALLOWED_JOB_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"cancelled", "scheduled", "locked"},
     "scheduled": {"cancelled", "in_progress", "locked"},
     "in_progress": {"completed", "cancelled"},
+}
+
+_ALLOWED_INVOICE_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"issued", "cancelled"},
+    "issued": {"paid", "unpaid", "overdue", "cancelled"},
+    "unpaid": {"paid", "overdue", "cancelled"},
+    "overdue": {"paid", "cancelled"},
+    "paid": set(),
+    "cancelled": set(),
 }
 
 
@@ -39,6 +50,7 @@ class CustomerIdentity:
 
     customer_id: str
     email: str | None = None
+    tenant_id: str | None = None
 
 
 def infer_required_skill(message: str) -> str | None:
@@ -328,11 +340,12 @@ class HelpdeskOperationsService:
         job_id = f"job-{uuid4().hex}"
         self.connection.execute(
             """INSERT INTO jobs
-            (id, customer_id, title, description, status, priority,
-             service_area, required_skill, scheduled_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (id, tenant_id, customer_id, title, description, status, priority,
+             service_area, required_skill, scheduled_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
             (
                 job_id,
+                identity.tenant_id,
                 identity.customer_id,
                 title,
                 description,
@@ -468,11 +481,12 @@ class HelpdeskOperationsService:
         job_id = f"job-{uuid4().hex}"
         self.connection.execute(
             """INSERT INTO jobs
-            (id, customer_id, title, description, status, priority,
-             service_area, required_skill, scheduled_at)
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (id, tenant_id, customer_id, title, description, status, priority,
+             service_area, required_skill, scheduled_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
             (
                 job_id,
+                identity.tenant_id,
                 identity.customer_id,
                 title,
                 description,
@@ -927,6 +941,200 @@ class HelpdeskOperationsService:
         self.connection.commit()
         updated = dict(self._one("SELECT * FROM jobs WHERE id = ?", (job_id,)))
         return {"found": True, "job": updated, "previous_status": job["status"]}
+
+    def get_customer_invoice(
+        self, identity: CustomerIdentity, invoice_id: str
+    ) -> dict[str, Any]:
+        """Return an invoice only when it belongs to the authenticated customer."""
+        return dict(self._owned_row("invoices", invoice_id, identity.customer_id))
+
+    def get_customer_ticket(
+        self, identity: CustomerIdentity, ticket_id: str
+    ) -> dict[str, Any]:
+        """Return a ticket only when it belongs to the authenticated customer."""
+        return dict(self._owned_row("tickets", ticket_id, identity.customer_id))
+
+    def find_active_customer_ticket(
+        self, identity: CustomerIdentity
+    ) -> dict[str, Any] | None:
+        """Return the customer's most recent still-active ticket, if any.
+
+        Triage uses this to avoid creating a new ticket for every message in a
+        conversation. Closed and resolved tickets are not reused.
+
+        Ordering matters: ``created_at`` is stored with one-second resolution
+        (``CURRENT_TIMESTAMP``), so every ticket opened during a single
+        conversation can share the same value. The tie-break is therefore the
+        monotonic SQLite ``rowid`` rather than ``id``, which is a random UUID.
+        Without this the "most recent" ticket was effectively arbitrary, and
+        triage would sporadically open a duplicate ticket instead of updating
+        the existing one.
+        """
+
+        row = self._one(
+            """SELECT * FROM tickets
+            WHERE customer_id = ?
+              AND status NOT IN ('closed', 'resolved')
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1""",
+            (identity.customer_id,),
+        )
+        return dict(row) if row else None
+
+    def append_ticket_note(
+        self,
+        identity: CustomerIdentity,
+        ticket_id: str,
+        *,
+        note: str,
+        status: str | None = None,
+        resolution: str | None = None,
+        handled_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Append context to an owned ticket without replacing its description.
+
+        Used by triage when a follow-up message belongs to an existing ticket,
+        so the customer issue is tracked in one place instead of being split
+        across a new ticket per message.
+        """
+
+        ticket = dict(self._owned_row("tickets", ticket_id, identity.customer_id))
+        if ticket["status"] in {"closed", "resolved"}:
+            raise BusinessRuleError(
+                f"ticket '{ticket_id}' is already {ticket['status']}"
+            )
+
+        description = f"{ticket['description']}\n\n---\n{note}".strip()
+        assignments = ["description = ?"]
+        parameters: list[Any] = [description]
+
+        if status is not None:
+            assignments.append("status = ?")
+            parameters.append(TicketStatus(status).value)
+        if resolution is not None:
+            assignments.append("resolution = ?")
+            parameters.append(resolution)
+        if handled_by is not None:
+            assignments.append("handled_by = ?")
+            parameters.append(HandledBy(handled_by).value)
+
+        parameters.extend([ticket_id, identity.customer_id])
+        self.connection.execute(
+            f"UPDATE tickets SET {', '.join(assignments)} "
+            "WHERE id = ? AND customer_id = ?",
+            tuple(parameters),
+        )
+        self._audit(
+            "agent",
+            None,
+            "ticket_note_appended",
+            "ticket",
+            ticket_id,
+            identity.customer_id,
+            {"status": status, "handled_by": handled_by},
+        )
+        self.connection.commit()
+        return dict(self._one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
+
+    def list_customer_invoices(
+        self, identity: CustomerIdentity, *, only_outstanding: bool = False
+    ) -> list[dict[str, Any]]:
+        """List invoices owned by the authenticated customer."""
+        query = "SELECT * FROM invoices WHERE customer_id = ?"
+        if only_outstanding:
+            query += " AND status IN ('unpaid', 'overdue', 'issued')"
+        query += " ORDER BY due_date, id"
+        rows = self.connection.execute(query, (identity.customer_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_customer_invoice(
+        self,
+        identity: CustomerIdentity,
+        *,
+        job_id: str,
+        amount: str,
+        due_date: str,
+        status: str = "unpaid",
+    ) -> dict[str, Any]:
+        """Create an invoice for a job the customer owns."""
+        self._require_verified_customer(identity.customer_id)
+        if job_id.isdigit():
+            job_id = f"job-{job_id}"
+        # Ownership of the job is validated before any invoice is written.
+        self._owned_row("jobs", job_id, identity.customer_id)
+
+        try:
+            amount_value = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError) as error:
+            raise BusinessRuleError(f"invalid invoice amount: {amount!r}") from error
+        if amount_value < 0:
+            raise BusinessRuleError("invoice amount must not be negative")
+
+        try:
+            due = date.fromisoformat(due_date)
+        except (TypeError, ValueError) as error:
+            raise BusinessRuleError(f"invalid due date: {due_date!r}") from error
+
+        status_value = InvoiceStatus(status).value
+        invoice_id = f"invoice-{uuid4().hex}"
+        tax = (amount_value * Decimal("0.2")).quantize(Decimal("0.01"))
+        self.connection.execute(
+            """INSERT INTO invoices
+            (id, customer_id, job_id, amount, subtotal, tax, total, status, due_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                invoice_id,
+                identity.customer_id,
+                job_id,
+                float(amount_value),
+                float(amount_value),
+                float(tax),
+                float(amount_value + tax),
+                status_value,
+                due.isoformat(),
+            ),
+        )
+        self._audit(
+            "agent",
+            None,
+            "invoice_created",
+            "invoice",
+            invoice_id,
+            identity.customer_id,
+            {"job_id": job_id, "amount": float(amount_value)},
+        )
+        self.connection.commit()
+        return dict(self._one("SELECT * FROM invoices WHERE id = ?", (invoice_id,)))
+
+    def update_customer_invoice_status(
+        self, identity: CustomerIdentity, invoice_id: str, new_status: str
+    ) -> dict[str, Any]:
+        """Update an owned invoice's status, enforcing allowed transitions."""
+        invoice = dict(self._owned_row("invoices", invoice_id, identity.customer_id))
+        current = invoice["status"]
+        allowed = _ALLOWED_INVOICE_STATUS_TRANSITIONS.get(current, set())
+        target = InvoiceStatus(new_status).value
+        if target not in allowed:
+            raise BusinessRuleError(
+                f"Cannot transition invoice '{invoice_id}' from '{current}' to "
+                f"'{target}'. Allowed transitions: {sorted(allowed)}"
+            )
+        self.connection.execute(
+            "UPDATE invoices SET status = ? WHERE id = ? AND customer_id = ?",
+            (target, invoice_id, identity.customer_id),
+        )
+        self._audit(
+            "agent",
+            None,
+            "invoice_status_updated",
+            "invoice",
+            invoice_id,
+            identity.customer_id,
+            {"previous_status": current, "new_status": target},
+        )
+        self.connection.commit()
+        updated = self._one("SELECT * FROM invoices WHERE id = ?", (invoice_id,))
+        return {"invoice": dict(updated), "previous_status": current}
 
     def _should_create_job_for_ticket(self, ticket: sqlite3.Row | None) -> bool:
         if ticket is None:

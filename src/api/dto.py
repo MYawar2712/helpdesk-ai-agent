@@ -212,3 +212,74 @@ class InvoiceUpdateDTO(BaseModel):
     amount: Decimal | None = Field(default=None, gt=0)
     status: str | None = None
     due_date: datetime | None = None
+
+
+# ── Chat / Conversation DTOs (Day 5) ─────────────────────────────────────────
+
+
+class ConversationCreateRequest(BaseModel):
+    """Payload to open a new chat conversation."""
+
+    subject: str = Field(default="", max_length=255, description="Optional subject.")
+    ticket_id: str | None = Field(
+        default=None, description="Optional linked ticket ID."
+    )
+
+
+class ConversationResponse(BaseModel):
+    """Public representation of a conversation thread."""
+
+    conversation_id: str
+    tenant_id: str
+    customer_id: str
+    ticket_id: str | None
+    subject: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MessageResponse(BaseModel):
+    """A single message inside a conversation."""
+
+    message_id: str
+    conversation_id: str
+    sender_type: str
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetailResponse(BaseModel):
+    """Conversation with its full message history."""
+
+    conversation_id: str
+    tenant_id: str
+    customer_id: str
+    ticket_id: str | None
+    subject: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[MessageResponse]
+
+    model_config = {"from_attributes": True}
+
+
+class SendMessageRequest(BaseModel):
+    """Payload to send a customer message into a conversation."""
+
+    content: str = Field(..., min_length=1, description="Customer message text.")
+
+
+class SendMessageResponse(BaseModel):
+    """Response returned after a customer message is processed by the AI."""
+
+    conversation_id: str
+    message_id: str
+    sender: str
+    content: str
+    created_at: datetime

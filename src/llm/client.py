@@ -152,10 +152,14 @@ class LLMClient:
 
     def _build_openai_provider(self) -> Provider:
         try:
+            import httpx
             from openai import OpenAI
         except ImportError as error:
             raise LLMAPIError("OpenAI SDK is not installed") from error
         kwargs: dict[str, Any] = {"api_key": self.config.api_key}
         if self.config.base_url:
             kwargs["base_url"] = self.config.base_url
+        # The development environment may expose a dead localhost proxy.
+        # LLM traffic must connect directly to the configured provider.
+        kwargs["http_client"] = httpx.Client(trust_env=False)
         return OpenAI(**kwargs)

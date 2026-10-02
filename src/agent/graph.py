@@ -13,6 +13,11 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agent.checkpointer import (
+    CheckpointStateError,
+    CheckpointUnavailableError,
+    is_checkpoint_failure,
+)
 from agent.rag_node import RAGNode
 from agent.tracing import traceable
 from clients.nosql_client import NoSQLClient
@@ -149,18 +154,21 @@ class HelpdeskAgent:
         tools: list[BaseTool] | None = None,
         rag_node: RAGNode | None = None,
         conversation_repo: ConversationRepository | None = None,
+        checkpointer: Any | None = None,
     ) -> None:
         self._llm_client = llm_client
         active_tools = tools if tools is not None else create_default_tools()
         self._tools = {tool.name: tool for tool in active_tools}
         self._rag_node = rag_node
         self._conv_repo = conversation_repo
+        self._checkpointer = checkpointer
         self.graph = build_helpdesk_graph(
             self._decision_node,
             self._tool_node,
             self._handoff_node,
             self._rag_execution_node,
             self._final_node,
+            checkpointer=checkpointer,
         )
 
     @traceable(name="helpdesk_agent")
@@ -226,6 +234,19 @@ class HelpdeskAgent:
                 email_thread_id=email_thread_id,
                 customer_id=resolved_customer_id,
             )
+            # With persistent checkpointing the conversation_id is the single
+            # canonical thread id. If the repository resolved a different thread
+            # (it does that for foreign customers on the legacy email path) we
+            # must NOT fork a second thread for this conversation.
+            if (
+                self._checkpointer is not None
+                and email_thread_id
+                and thread_id != email_thread_id
+            ):
+                raise CheckpointStateError(
+                    "Conversation thread could not be resolved to the requested "
+                    "conversation id."
+                )
             # Persist the inbound customer message (idempotent)
             self._conv_repo.add_message(
                 thread_id=thread_id,
@@ -247,7 +268,22 @@ class HelpdeskAgent:
         if history:
             initial_state["conversation_history"] = history
 
-        state = self.graph.invoke(initial_state)
+        if self._checkpointer is not None and thread_id:
+            try:
+                state = self.graph.invoke(
+                    initial_state,
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+            except (CheckpointUnavailableError, CheckpointStateError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - re-raised as a typed error
+                if is_checkpoint_failure(exc):
+                    raise CheckpointUnavailableError(
+                        "Unable to read or write persistent conversation state."
+                    ) from exc
+                raise
+        else:
+            state = self.graph.invoke(initial_state)
 
         # ------------------------------------------------------------------
         # Conversation-memory: persist the agent response
@@ -688,11 +724,17 @@ get_open_invoices, get_all_invoices, schedule_job, cancel_job, update_job_status
 
     @traceable(name="final_node")
     def _final_node(self, state: AgentState) -> AgentState:
-        if state["route"] in {"respond", "rag"}:
+        if state["route"] == "rag":
             return {
                 **state,
-                "final_response": state.get("final_response")
-                or state.get("response", ""),
+                "final_response": state.get("final_response", ""),
+            }
+        if state["route"] == "respond":
+            # ``final_response`` may be restored from a previous checkpoint;
+            # always prefer the response produced for this turn.
+            return {
+                **state,
+                "final_response": state.get("response", ""),
             }
         if state["route"] == "handoff":
             return state
@@ -713,6 +755,8 @@ def build_helpdesk_graph(
     handoff_node: Any,
     rag_node: Any,
     final_node: Any,
+    *,
+    checkpointer: Any | None = None,
 ) -> Any:
     """Build a graph from independently testable node callables."""
     graph = StateGraph(AgentState)
@@ -737,7 +781,7 @@ def build_helpdesk_graph(
     graph.add_edge("human_handoff", "final")
     graph.add_edge("rag", "final")
     graph.add_edge("final", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def _extract_job_id(text: str) -> str | None:

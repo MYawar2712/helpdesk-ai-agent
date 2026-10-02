@@ -483,6 +483,123 @@ Query parameters: `?page=1&page_size=20` (max `page_size` is 100).
 
 ---
 
+## Persistent LangGraph Conversation State (Day 6)
+
+### Why persistent checkpointing is required
+
+An in-memory checkpointer (e.g. `MemorySaver()`) keeps LangGraph state in RAM. The
+state is therefore lost on every deploy, crash, or worker restart, and each API
+process holds a *different* copy of the same conversation. That breaks follow-up
+context, produces contradictory answers when requests are load-balanced across
+workers, and makes multi-turn conversations unreliable.
+
+Day 6 moves that state into PostgreSQL so a conversation can be resumed exactly
+where it left off, by any process, after any restart.
+
+### Storage backend
+
+| Environment | Backend | Notes |
+| --- | --- | --- |
+| PostgreSQL (production) | `PostgresSaver` (`langgraph-checkpoint-postgres`) | Official LangGraph schema in the application database |
+| SQLite (local dev / tests) | `SqliteSaver` (`langgraph-checkpoint-sqlite`) | Separate file: `db/langgraph_checkpoints.sqlite3` |
+
+The saver is created in `src/agent/checkpointer.py` and is opened once during the
+FastAPI lifespan, then handed to `HelpdeskAgent` when the graph is compiled:
+
+```python
+with open_persistent_checkpointer() as checkpointer:
+    app.state.agent = HelpdeskAgent(..., checkpointer=checkpointer)
+```
+
+`HelpdeskAgent.invoke()` passes the thread id through the standard LangGraph
+config. `conversation_id` **is** the `thread_id` — no second identifier is ever
+generated:
+
+```python
+config = {"configurable": {"thread_id": conversation_id}}
+graph.invoke(initial_state, config=config)
+```
+
+### Architecture
+
+```text
+Customer
+   ↓
+FastAPI
+   ↓
+Conversation
+   ↓
+conversation_id
+   ↓
+LangGraph thread_id
+   ↓
+Persistent Checkpointer
+   ↓
+PostgreSQL
+```
+
+Checkpoints are stored in LangGraph's own tables (`checkpoints`,
+`checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`). These are kept
+**separate** from the business `conversations` / `messages` tables: the message
+table is the customer-visible transcript, while the checkpoint store is
+internal graph state.
+
+### Surviving application restarts
+
+Because the thread id is derived from `conversation_id` and all state lives in
+the database, a restart only requires re-opening the saver and recompiling the
+graph. The next request with the same `conversation_id` transparently restores
+the previous state. `tests/test_day6_persistence.py` proves this by exiting the
+checkpointer context, opening a new saver against the same file, recompiling the
+graph, and asserting the restored values.
+
+### Configuration
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | yes (prod) | PostgreSQL URL; also used for checkpoints |
+| `LANGGRAPH_DATABASE_URL` | no | Overrides the checkpoint database explicitly |
+| `LANGGRAPH_SQLITE_PATH` | no | SQLite checkpoint file location (local only) |
+
+When `DATABASE_URL` is PostgreSQL, checkpoints use the same database. When it is
+SQLite, checkpoints go to a **separate** SQLite file so business tables stay
+independent.
+
+### Migration
+
+The checkpoint schema is owned by LangGraph, not hand-written. The Alembic
+migration `002_day6_checkpoints` replays `PostgresSaver.MIGRATIONS` so
+deployments do not depend on application startup order, and it is a no-op on
+SQLite. `PostgresSaver.setup()` remains idempotent and simply becomes a no-op
+once Alembic has applied the schema.
+
+```powershell
+alembic upgrade head
+```
+
+Inspect the rendered SQL without touching a database:
+
+```powershell
+$env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/helpdesk_db"
+alembic upgrade head --sql
+```
+
+`downgrade` removes only the LangGraph checkpoint tables; conversation and
+message data are never dropped.
+
+### Error handling
+
+- Checkpoint store unavailable (connection loss, corrupt/locked database) → `503`
+- Thread that cannot be safely resumed → `503`, never a silently forked thread
+- Ownership / tenant checks run **before** the graph is invoked, so an
+  unauthorized caller never reaches another customer's checkpoint.
+
+### Running the persistence tests
+
+```powershell
+pytest tests/test_day6_persistence.py -v
+```
+
 ## Verification Commands
 
 ```powershell

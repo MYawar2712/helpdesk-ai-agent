@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 
 from agent.graph import HelpdeskAgent
@@ -78,10 +77,10 @@ def test_integration_normal_request() -> None:
     assert "Hello!" in result["final_response"]
 
 
-def test_integration_invalid_chat_request() -> None:
+def test_integration_invalid_chat_request(legacy_client, auth_headers) -> None:
     """Test FastAPI /chat endpoint rejects missing/empty message with HTTP 422."""
-    with TestClient(app) as client:
-        response = client.post("/chat", json={"message": "   "})
+    with legacy_client as client:
+        response = client.post("/chat", json={"message": "   "}, headers=auth_headers)
     assert response.status_code == 422
 
 
@@ -123,7 +122,7 @@ def test_integration_rag_failure_fallback() -> None:
     assert "don't have enough information" in result["final_response"]
 
 
-def test_integration_complete_chat_flow() -> None:
+def test_integration_complete_chat_flow(legacy_client, auth_headers) -> None:
     """Test end-to-end HTTP POST /chat -> LangGraph Agent -> RAG -> Structured JSON."""
     mock_llm = MagicMock()
     mock_llm.generate_json.return_value = {"route": "rag"}
@@ -146,11 +145,12 @@ def test_integration_complete_chat_flow() -> None:
 
     mock_agent = HelpdeskAgent(llm_client=mock_llm, rag_node=mock_rag_node)
 
-    with TestClient(app) as client:
+    with legacy_client as client:
         app.state.agent = mock_agent
         response = client.post(
             "/chat",
             json={"message": "How to fix low boiler pressure?"},
+            headers=auth_headers,
         )
 
     assert response.status_code == 200

@@ -1,8 +1,5 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from api.main import app
 from db.seed import seed_database
 from workers.celery_app import celery_app
 from workers.tasks import process_ticket_async
@@ -29,10 +26,12 @@ def test_process_ticket_task_in_eager_mode(tmp_path: Path, monkeypatch) -> None:
     check.close()
 
 
-def test_async_process_endpoint_returns_accepted() -> None:
+def test_async_process_endpoint_returns_accepted(legacy_client, auth_headers) -> None:
     celery_app.conf.update(task_always_eager=True)
-    with TestClient(app) as client:
-        response = client.post("/api/v1/tickets/ticket-1/process-async")
+    with legacy_client as client:
+        response = client.post(
+            "/api/v1/tickets/ticket-1/process-async", headers=auth_headers
+        )
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
     assert response.json()["task_id"]

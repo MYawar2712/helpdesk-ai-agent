@@ -7,14 +7,17 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -93,6 +96,9 @@ class Tenant(Base):
     audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog", back_populates="tenant"
     )
+    approval_requests: Mapped[list[ApprovalRequest]] = relationship(
+        "ApprovalRequest", back_populates="tenant", cascade="all, delete-orphan"
+    )
 
 
 class User(Base):
@@ -104,6 +110,12 @@ class User(Base):
     tenant_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    customer_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("customers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -124,6 +136,9 @@ class User(Base):
     )
 
     tenant: Mapped[Tenant | None] = relationship("Tenant", back_populates="users")
+    customer: Mapped[Customer | None] = relationship(
+        "Customer", foreign_keys=[customer_id]
+    )
     audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog", back_populates="actor_user"
     )
@@ -432,7 +447,13 @@ class Message(Base):
 
 
 class AIConfiguration(Base):
-    """Tenant-specific AI instructions, tone, and escalation rules."""
+    """Tenant-specific AI instructions, tone, and escalation rules.
+
+    Day 8 extends the Day 1 table from one row per tenant to one row per
+    ``(tenant_id, agent_type)`` pair, so each agent can be configured
+    independently. The original ``global_instructions`` column is retained and
+    serves the ``GLOBAL`` agent type, preserving existing rows.
+    """
 
     __tablename__ = "ai_configurations"
 
@@ -441,13 +462,32 @@ class AIConfiguration(Base):
         String(36),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
+        index=True,
+    )
+    agent_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="GLOBAL",
+        server_default="GLOBAL",
         index=True,
     )
     global_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     tone: Mapped[str | None] = mapped_column(String(255), nullable=True)
     escalation_rules: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     business_rules: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    #: Tenant-declared tool allow-list. This can only ever *narrow* the platform
+    #: tool scope; it can never grant a tool the platform forbids.
+    allowed_tools: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=sa.true(),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now_utc
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -455,7 +495,53 @@ class AIConfiguration(Base):
         onupdate=_now_utc,
     )
 
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_type", name="uq_ai_config_tenant_agent"),
+    )
+
     tenant: Mapped[Tenant] = relationship("Tenant", back_populates="ai_configuration")
+
+
+class KnowledgeChunk(Base):
+    """A retrievable text chunk belonging to one tenant's document.
+
+    Chunks are persisted relationally so tenant ownership can be re-verified
+    after vector search. The embedding itself lives in the vector store, keyed
+    by :attr:`id`.
+    """
+
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_metadata: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now_utc
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "chunk_index", name="uq_knowledge_chunk_doc_index"
+        ),
+    )
+
+    tenant: Mapped[Tenant] = relationship("Tenant")
+    document: Mapped[KnowledgeDocument] = relationship(
+        "KnowledgeDocument", back_populates="chunks"
+    )
 
 
 class KnowledgeDocument(Base):
@@ -488,6 +574,9 @@ class KnowledgeDocument(Base):
 
     tenant: Mapped[Tenant] = relationship(
         "Tenant", back_populates="knowledge_documents"
+    )
+    chunks: Mapped[list[KnowledgeChunk]] = relationship(
+        "KnowledgeChunk", back_populates="document", cascade="all, delete-orphan"
     )
 
 
@@ -522,3 +611,67 @@ class AuditLog(Base):
 
     tenant: Mapped[Tenant | None] = relationship("Tenant", back_populates="audit_logs")
     actor_user: Mapped[User | None] = relationship("User", back_populates="audit_logs")
+
+
+class ApprovalRequest(Base):
+    """A human-in-the-loop approval request raised by an agent action.
+
+    The row is the durable record of a paused LangGraph turn. Status moves
+    ``PENDING -> APPROVED -> EXECUTING -> EXECUTED`` (or a terminal rejection,
+    expiry, or cancellation). The conditional transition performed by
+    :mod:`hitl.service` is what makes execution idempotent under retries.
+    """
+
+    __tablename__ = "approval_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    ticket_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    requested_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    action_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payload: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="LOW")
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="PENDING",
+        index=True,
+    )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: Set when the agent is waiting for a decision. A non-null value means the
+    #: LangGraph thread for ``conversation_id`` is paused on this approval.
+    execution_result: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now_utc
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now_utc,
+        onupdate=_now_utc,
+    )
+
+    tenant: Mapped[Tenant] = relationship("Tenant", back_populates="approval_requests")
+    reviewer: Mapped[User | None] = relationship("User", foreign_keys=[reviewed_by])
