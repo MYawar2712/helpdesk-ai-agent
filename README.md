@@ -6,7 +6,6 @@
 
 Supervisor + specialist LangGraph agents, RAG with a grounding check, human-in-the-loop approvals, and security enforced *below* the LLM.
 
-[![CI](https://github.com/MYawar2712/helpdesk-ai-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/MYawar2712/helpdesk-ai-agent/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white)
@@ -167,7 +166,7 @@ pytest          # ~610 test functions under tests/
 ruff check .
 ```
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs ruff, pytest and a Docker build on every push. The `eval/` directory holds a golden dataset, adversarial cases, and PromptFoo / LangSmith runners (see [eval/README.md](eval/README.md)).
+A GitHub Actions workflow ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs ruff, pytest and a Docker build. The `eval/` directory holds a golden dataset, adversarial cases, and PromptFoo / LangSmith runners (see [eval/README.md](eval/README.md)).
 
 ## Roadmap
 
