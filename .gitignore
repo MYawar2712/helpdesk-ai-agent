@@ -21,3 +21,9 @@ eval/last_adversarial_results.json
 eval/.promptfoo-state/
 db/*.sqlite3
 data/
+
+.pre-commit-cache/
+db/*.sqlite3-shm
+db/*.sqlite3-wal
+frontend/node_modules/
+frontend/.next/
